@@ -1,0 +1,26 @@
+blocked_modules:
+  - os
+  - subprocess
+  - socket
+  - shutil
+  - sys
+  - requests
+  - httpx
+  - urllib
+  - urllib3
+  - aiohttp
+  - websocket
+  - paramiko
+
+blocked_functions:
+  - eval
+  - exec
+  - compile
+  - open
+
+allow_network: false
+max_runtime_sec: 600
+max_ram_mb: 4096
+allow_fs_outside_sandbox: false
+require_user_confirm: true
+confirm_timeout_sec: 15

@@ -1,0 +1,993 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Check if we're running under Live Server
+      if (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') {
+          let lastModified = '';
+
+          // Check for file changes every second
+          setInterval(async () => {
+              try {
+                  const response = await fetch(window.location.href, { method: 'HEAD' });
+                  // get a timestamp that shows when the file was last changed
+                  const currentModified = response.headers.get('last-modified');
+
+                  if (lastModified && lastModified !== currentModified) {
+                      window.location.reload();
+                  }
+
+                  lastModified = currentModified;
+              } catch (e) {
+                  console.error('Error checking for updates:', e);
+              }
+          }, 1000);
+      }
+  </script>
+    <script
+      id="p5scripttag"
+      src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"
+      integrity="sha512-uaz5GpnQoE6t5echKlX8P52czvsIGgLPcvlzfvRubLZ1Hp8JemUDnbUiAahbVtPb+jUVrNETuXvAhDDF/N3M4w=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
+
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+
+    <script>
+      const bgCol = "#FFFFFF";
+const accentCol = "#1a439e";
+
+hljs.initHighlightingOnLoad();
+
+// Function to update background color globally
+function updateBackgroundColor(color) {
+  // Update the JS variable
+  window.bgColCurrent = color;
+
+  // Update body background
+  document.body.style.backgroundColor = color;
+
+  // Update canvas container background
+  const canvasContainer = document.getElementById('canvas-container');
+  if (canvasContainer) {
+    canvasContainer.style.backgroundColor = color;
+  }
+}
+
+// Store tree data for each stage
+const stageData = {
+  Stage_1: null,
+  Stage_2: null,
+  Stage_3: null,
+  Stage_4: null
+};
+
+// Keep track of current selected stage
+let currentStage = null;
+let currentSketch = null;
+let availableStages = [];
+
+// Class definitions for nodes and edges
+class Node {
+  constructor(x, y, id, isRoot = false) {
+    this.x = x;
+    this.y = y;
+    this.id = id;
+    this.visible = isRoot; // Only root nodes are visible initially
+    this.appearProgress = 0;
+    this.popEffect = 0;
+    this.selected = false;
+    this.isRootNode = isRoot;
+  }
+
+  update() {
+    if (this.visible) {
+      // Handle the main appearance animation
+      if (this.appearProgress < 1) {
+        this.appearProgress += 0.06;
+
+        // When we reach full size, trigger the pop effect
+        if (this.appearProgress >= 1) {
+          this.appearProgress = 1; // Cap at 1
+          this.popEffect = 1; // Start the pop effect
+        }
+      }
+
+      // Handle the pop effect animation
+      if (this.popEffect > 0) {
+        this.popEffect -= 0.15; // Control how quickly it shrinks back
+        if (this.popEffect < 0) this.popEffect = 0; // Don't go negative
+      }
+    }
+  }
+
+  startAnimation() {
+    this.visible = true;
+  }
+
+  color() {
+    if (this.selected) {
+      return accentCol; // Use the global accent color variable for selected node
+    }
+    return '#4263eb'; // Default blue color
+  }
+
+  render(p5) {
+    if (this.visible) {
+      const popBonus = this.popEffect * 0.1;
+      const nodeScale = p5.map(this.appearProgress, 0, 1, 0, 1) + popBonus;
+      const alpha = p5.map(this.appearProgress, 0, 1, 0, 255);
+
+      p5.push();
+      p5.translate(this.x, this.y);
+
+      // Shadow effect
+      p5.noStroke();
+      p5.rectMode(p5.CENTER);
+
+      for (let i = 1; i <= 4; i++) {
+        p5.fill(0, 0, 0, alpha * 0.06);
+        p5.rect(i, i, 30 * nodeScale, 30 * nodeScale, 10);
+      }
+
+      // Main square - use node's color with alpha
+      let nodeColor = p5.color(this.color());
+      nodeColor.setAlpha(alpha);
+      p5.fill(nodeColor);
+      p5.rect(0, 0, 30 * nodeScale, 30 * nodeScale, 10);
+
+      // Draw checkmark icon if the node is selected
+      if (this.selected && this.appearProgress >= 1) {
+        p5.stroke(255);
+        p5.strokeWeight(2 * nodeScale);
+        p5.noFill();
+        // Draw checkmark
+        p5.beginShape();
+        p5.vertex(-8, 0);
+        p5.vertex(-3, 5);
+        p5.vertex(8, -6);
+        p5.endShape();
+      }
+
+      p5.pop();
+    }
+  }
+
+  isMouseOver(p5) {
+    return this.visible &&
+           p5.mouseX > this.x - 15 &&
+           p5.mouseX < this.x + 15 &&
+           p5.mouseY > this.y - 15 &&
+           p5.mouseY < this.y + 15;
+  }
+
+  // Connect this node to a child node
+  child(childNode) {
+    // Create an edge from this node to the child
+    let isLeft = childNode.x < this.x;
+    let isRight = childNode.x > this.x;
+    let edge = new Edge(this, childNode, isLeft, isRight);
+    return edge;
+  }
+}
+
+class Edge {
+  constructor(parent, child, isLeft, isRight) {
+    this.parent = parent;
+    this.child = child;
+    this.isLeft = isLeft;
+    this.isRight = isRight;
+    this.progress = 0;
+
+    // Calculate the midpoint where branching occurs
+    this.midY = parent.y + (child.y - parent.y) * 0.6;
+
+    // Use the actual child x-coordinate
+    // This ensures the edge will connect directly to the child node
+    this.branchX = child.x;
+  }
+
+  update() {
+    if (this.parent.visible && this.progress < 1) {
+      this.progress += 0.01; // Adjust animation speed
+    }
+    if (this.progress >= 1) {
+      this.child.visible = true;
+    }
+  }
+
+  color() {
+    return this.child.color();
+  }
+
+  render(p5) {
+    if (!this.parent.visible) return;
+
+    // Calculate path lengths
+    const verticalDist1 = this.midY - this.parent.y;
+    const horizontalDist = Math.abs(this.branchX - this.parent.x);
+    const verticalDist2 = this.child.y - this.midY;
+    const totalLength = verticalDist1 + horizontalDist + verticalDist2;
+
+    // Calculate how much of each segment to draw
+    const currentLength = totalLength * this.progress;
+
+    p5.stroke(180, 190, 205);
+    p5.strokeWeight(1.5);
+    p5.noFill();
+
+    // Always draw the first vertical segment from parent
+    if (currentLength > 0) {
+      const firstSegmentLength = Math.min(currentLength, verticalDist1);
+      const currentMidY = p5.lerp(this.parent.y, this.midY, firstSegmentLength / verticalDist1);
+      p5.line(this.parent.x, this.parent.y, this.parent.x, currentMidY);
+    }
+
+    if (currentLength > verticalDist1) {
+      // Draw second segment (horizontal)
+      const secondSegmentLength = Math.min(currentLength - verticalDist1, horizontalDist);
+      const currentBranchX = p5.lerp(this.parent.x, this.branchX, secondSegmentLength / horizontalDist);
+      p5.line(this.parent.x, this.midY, currentBranchX, this.midY);
+
+      if (currentLength > verticalDist1 + horizontalDist) {
+        // Draw third segment (vertical to child)
+        const thirdSegmentLength = currentLength - verticalDist1 - horizontalDist;
+        const currentChildY = p5.lerp(this.midY, this.child.y, thirdSegmentLength / verticalDist2);
+        p5.line(this.branchX, this.midY, this.branchX, currentChildY);
+      }
+    }
+  }
+}
+
+// Create a modified sketch for each stage
+function createTreeSketch(stageId) {
+  return function(p5) {
+    let nodes = [];
+    let edges = [];
+    let treeData = stageData[stageId];
+
+    p5.setup = function() {
+      const canvas = p5.createCanvas(p5.windowWidth * 0.4, p5.windowHeight);
+      canvas.parent('canvas-container');
+      p5.smooth();
+      p5.frameRate(60);
+
+      if (treeData) {
+        createTreeFromData(treeData);
+      }
+    };
+
+    p5.windowResized = function() {
+      p5.resizeCanvas(p5.windowWidth * 0.4, p5.windowHeight);
+    };
+
+    function createTreeFromData(data) {
+      // Clear existing nodes and edges
+      nodes = [];
+      edges = [];
+
+      // Add defensive checks to prevent errors
+      if (!data || !data.layout || !Array.isArray(data.layout) || !data.edges || !Array.isArray(data.edges)) {
+        console.error("Invalid tree data format:", data);
+        return; // Exit if data structure is invalid
+      }
+
+      // Find all parent nodes in edges
+      const parentNodes = new Set();
+      for (const [parentId, childId] of data.edges) {
+        parentNodes.add(parentId);
+      }
+
+      // Create nodes
+      for (let i = 0; i < data.layout.length; i++) {
+        const [nx, ny] = data.layout[i];
+        // A node is a root if it's a parent and not a child in any edge
+        const isRoot = parentNodes.has(i) && data.edges.every(edge => edge[1] !== i);
+
+        const node = new Node(
+          nx * p5.width * 0.8 + p5.width * 0.1,
+          ny * p5.height * 0.8 + p5.height * 0.1,
+          i,
+          isRoot
+        );
+        nodes.push(node);
+      }
+
+      // If no root was found, make the first parent node visible
+      if (!nodes.some(node => node.visible) && parentNodes.size > 0) {
+        // Get the first parent node
+        const firstParentId = [...parentNodes][0];
+        if (nodes[firstParentId]) {
+          nodes[firstParentId].visible = true;
+        }
+      }
+
+      // Create edges
+      for (const [parentId, childId] of data.edges) {
+        const parent = nodes[parentId];
+        const child = nodes[childId];
+        if (parent && child) { // Verify both nodes exist
+          const isLeft = child.x < parent.x;
+          const isRight = child.x > parent.x;
+          edges.push(new Edge(parent, child, isLeft, isRight));
+        }
+      }
+
+      // Select the first node by default
+      if (nodes.length > 0) {
+        nodes[0].selected = true;
+        updateNodeInfo(0);
+      }
+    }
+
+    p5.draw = function() {
+      // Use the global background color if available, otherwise use the default bgCol
+      const currentBgColor = window.bgColCurrent || bgCol;
+      p5.background(currentBgColor);
+
+      // Update and render edges
+      for (const edge of edges) {
+        edge.update();
+        edge.render(p5);
+      }
+
+      // Update and render nodes
+      for (const node of nodes) {
+        node.update();
+        node.render(p5);
+      }
+
+      // Handle mouse hover
+      p5.cursor(p5.ARROW);
+      for (const node of nodes) {
+        if (node.isMouseOver(p5)) {
+          p5.cursor(p5.HAND);
+        }
+      }
+    };
+
+    p5.mousePressed = function() {
+      // Check if any node was clicked
+      for (let i = 0; i < nodes.length; i++) {
+        if (nodes[i].visible && nodes[i].isMouseOver(p5)) {
+          // Deselect all nodes
+          nodes.forEach(n => n.selected = false);
+          // Select the clicked node
+          nodes[i].selected = true;
+          // Update the right panel with node info
+          updateNodeInfo(i);
+          break;
+        }
+      }
+    };
+
+    function updateNodeInfo(nodeIndex) {
+      if (treeData) {
+        setNodeInfo(
+          treeData.code[nodeIndex],
+          treeData.plan[nodeIndex],
+          treeData.plot_code?.[nodeIndex],
+          treeData.plot_plan?.[nodeIndex],
+          treeData.metrics?.[nodeIndex],
+          treeData.exc_type?.[nodeIndex] || '',
+          treeData.exc_info?.[nodeIndex]?.args?.[0] || '',
+          treeData.exc_stack?.[nodeIndex] || [],
+          treeData.plots?.[nodeIndex] || [],
+          treeData.plot_analyses?.[nodeIndex] || [],
+          treeData.vlm_feedback_summary?.[nodeIndex] || '',
+          treeData.datasets_successfully_tested?.[nodeIndex] || [],
+          treeData.exec_time_feedback?.[nodeIndex] || '',
+          treeData.exec_time?.[nodeIndex] || ''
+        );
+      }
+    }
+  };
+}
+
+// Start a new p5 sketch for the given stage
+function startSketch(stageId) {
+  if (currentSketch) {
+    currentSketch.remove();
+  }
+
+  if (stageData[stageId]) {
+    currentSketch = new p5(createTreeSketch(stageId));
+
+    // Update stage info
+    const stageNumber = stageId.split('_')[1];
+    let stageDesc = '';
+    switch(stageId) {
+      case 'Stage_1': stageDesc = 'Preliminary Investigation'; break;
+      case 'Stage_2': stageDesc = 'Baseline Tuning'; break;
+      case 'Stage_3': stageDesc = 'Research Agenda Execution'; break;
+      case 'Stage_4': stageDesc = 'Ablation Studies'; break;
+    }
+
+    document.getElementById('stage-info').innerHTML =
+      `<strong>Current Stage: ${stageNumber} - ${stageDesc}</strong>`;
+  }
+}
+
+// Handle tab selection
+function selectStage(stageId) {
+  if (!stageData[stageId] || !availableStages.includes(stageId)) {
+    return; // Don't allow selection of unavailable stages
+  }
+
+  // Update active tab styles
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.classList.remove('active');
+  });
+  document.querySelector(`.tab[data-stage="${stageId}"]`).classList.add('active');
+
+  // Start the new sketch
+  currentStage = stageId;
+  startSketch(stageId);
+}
+
+// Function to load the tree data for all stages
+async function loadAllStageData(baseTreeData) {
+  console.log("Loading stage data with base data:", baseTreeData);
+
+  // The base tree data is for the current stage
+  const currentStageId = baseTreeData.current_stage || 'Stage_1';
+
+  // Ensure base tree data is valid and has required properties
+  if (baseTreeData && baseTreeData.layout && baseTreeData.edges) {
+    stageData[currentStageId] = baseTreeData;
+    availableStages.push(currentStageId);
+    console.log(`Added current stage ${currentStageId} to available stages`);
+  } else {
+    console.warn(`Current stage ${currentStageId} data is invalid:`, baseTreeData);
+  }
+
+  // Use relative path to load other stage trees
+  const logDirPath = baseTreeData.log_dir_path || '.';
+  console.log("Log directory path:", logDirPath);
+
+  // Load data for each stage if available
+  const stageNames = ['Stage_1', 'Stage_2', 'Stage_3', 'Stage_4'];
+  const stageNames2actualNames = {
+    'Stage_1': 'stage_1_initial_implementation_1_preliminary',
+    'Stage_2': 'stage_2_baseline_tuning_1_first_attempt',
+    'Stage_3': 'stage_3_creative_research_1_first_attempt',
+    'Stage_4': 'stage_4_ablation_studies_1_first_attempt'
+    }
+
+  for (const stage of stageNames) {
+
+    if (baseTreeData.completed_stages && baseTreeData.completed_stages.includes(stage)) {
+      try {
+        console.log(`Attempting to load data for ${stage} from ${logDirPath}/${stageNames2actualNames[stage]}/tree_data.json`);
+        const response = await fetch(`${logDirPath}/${stageNames2actualNames[stage]}/tree_data.json`);
+
+        if (response.ok) {
+          const data = await response.json();
+
+          // Validate the loaded data
+          if (data && data.layout && data.edges) {
+            stageData[stage] = data;
+            availableStages.push(stage);
+            console.log(`Successfully loaded and validated data for ${stage}`);
+          } else {
+            console.warn(`Loaded data for ${stage} is invalid:`, data);
+          }
+        } else {
+          console.warn(`Failed to load data for ${stage} - HTTP status ${response.status}`);
+        }
+      } catch (error) {
+        console.error(`Error loading data for ${stage}:`, error);
+      }
+    } else {
+      console.log(`Skipping stage ${stage} - not in completed stages list:`, baseTreeData.completed_stages);
+    }
+  }
+
+  // Update tab visibility based on available stages
+  updateTabVisibility();
+
+  // Start with the first available stage
+  if (availableStages.length > 0) {
+    selectStage(availableStages[0]);
+  } else {
+    console.warn("No stages available to display");
+    // Display a message in the canvas area
+    document.getElementById('canvas-container').innerHTML =
+      '<div style="padding: 20px; color: #333; text-align: center;"><h3>No valid tree data available to display</h3></div>';
+  }
+}
+
+// Update tab visibility based on available stages
+function updateTabVisibility() {
+  const tabs = document.querySelectorAll('.tab');
+  tabs.forEach(tab => {
+    const stageId = tab.getAttribute('data-stage');
+    if (availableStages.includes(stageId)) {
+      tab.classList.remove('disabled');
+    } else {
+      tab.classList.add('disabled');
+    }
+  });
+}
+
+// Utility function to set the node info in the right panel
+const setNodeInfo = (code, plan, plot_code, plot_plan, metrics = null, exc_type = '', exc_info = '',
+    exc_stack = [], plots = [], plot_analyses = [], vlm_feedback_summary = '',
+    datasets_successfully_tested = [], exec_time_feedback = '', exec_time = '') => {
+  const codeElm = document.getElementById("code");
+  if (codeElm) {
+    if (code) {
+      codeElm.innerHTML = hljs.highlight(code, { language: "python" }).value;
+    } else {
+      codeElm.innerHTML = '<p>No code available</p>';
+    }
+  }
+
+  const planElm = document.getElementById("plan");
+  if (planElm) {
+    if (plan) {
+      planElm.innerHTML = hljs.highlight(plan, { language: "plaintext" }).value;
+    } else {
+      planElm.innerHTML = '<p>No plan available</p>';
+    }
+  }
+
+  const plot_codeElm = document.getElementById("plot_code");
+  if (plot_codeElm) {
+    if (plot_code) {
+      plot_codeElm.innerHTML = hljs.highlight(plot_code, { language: "python" }).value;
+    } else {
+      plot_codeElm.innerHTML = '<p>No plot code available</p>';
+    }
+  }
+
+  const plot_planElm = document.getElementById("plot_plan");
+  if (plot_planElm) {
+    if (plot_plan) {
+      plot_planElm.innerHTML = hljs.highlight(plot_plan, { language: "plaintext" }).value;
+    } else {
+      plot_planElm.innerHTML = '<p>No plot plan available</p>';
+    }
+  }
+
+  const metricsElm = document.getElementById("metrics");
+  if (metricsElm) {
+      let metricsContent = `<h3>Metrics:</h3>`;
+      if (metrics && metrics.metric_names) {
+          for (const metric of metrics.metric_names) {
+              metricsContent += `<div class="metric-group">`;
+              metricsContent += `<h4>${metric.metric_name}</h4>`;
+              metricsContent += `<p><strong>Description:</strong> ${metric.description || 'N/A'}</p>`;
+              metricsContent += `<p><strong>Optimization:</strong> ${metric.lower_is_better ? 'Minimize' : 'Maximize'}</p>`;
+
+              // Create table for dataset values
+              metricsContent += `<table class="metric-table">
+                  <tr>
+                      <th>Dataset</th>
+                      <th>Final Value</th>
+                      <th>Best Value</th>
+                  </tr>`;
+
+              for (const dataPoint of metric.data) {
+                  metricsContent += `<tr>
+                      <td>${dataPoint.dataset_name}</td>
+                      <td>${dataPoint.final_value?.toFixed(4) || 'N/A'}</td>
+                      <td>${dataPoint.best_value?.toFixed(4) || 'N/A'}</td>
+                  </tr>`;
+              }
+
+              metricsContent += `</table></div>`;
+          }
+      } else if (metrics === null) {
+          metricsContent += `<p>No metrics available</p>`;
+      }
+      metricsElm.innerHTML = metricsContent;
+  }
+
+  // Add plots display
+  const plotsElm = document.getElementById("plots");
+  if (plotsElm) {
+      if (plots && plots.length > 0) {
+          let plotsContent = '';
+          plots.forEach(plotPath => {
+              plotsContent += `
+                  <div class="plot-item">
+                      <img src="${plotPath}" alt="Experiment Plot" onerror="console.error('Failed to load plot:', this.src)"/>
+                  </div>`;
+          });
+          plotsElm.innerHTML = plotsContent;
+      } else {
+          plotsElm.innerHTML = '';
+      }
+  }
+
+  // Add error info display
+  const errorElm = document.getElementById("exc_info");
+  if (errorElm) {
+    if (exc_type) {
+      let errorContent = `<h3 style="color: #ff5555">Exception Information:</h3>
+                          <p><strong>Type:</strong> ${exc_type}</p>`;
+
+      if (exc_info) {
+        errorContent += `<p><strong>Details:</strong> <pre>${JSON.stringify(exc_info, null, 2)}</pre></p>`;
+      }
+
+      if (exc_stack) {
+        errorContent += `<p><strong>Stack Trace:</strong> <pre>${exc_stack.join('\n')}</pre></p>`;
+      }
+
+      errorElm.innerHTML = errorContent;
+    } else {
+      errorElm.innerHTML = "No exception info available";
+    }
+  }
+
+  const exec_timeElm = document.getElementById("exec_time");
+  if (exec_timeElm) {
+    let exec_timeContent = '<div id="exec_time"><h3>Execution Time (in seconds):</h3><p>' + exec_time + '</p></div>';
+    exec_timeElm.innerHTML = exec_timeContent;
+  }
+
+  const exec_time_feedbackElm = document.getElementById("exec_time_feedback");
+  if (exec_time_feedbackElm) {
+    let exec_time_feedbackContent = '<div id="exec_time_feedback_content">'
+    exec_time_feedbackContent += '<h3>Execution Time Feedback:</h3>'
+    exec_time_feedbackContent += '<p>' + exec_time_feedback + '</p>'
+    exec_time_feedbackContent += '</div>';
+    exec_time_feedbackElm.innerHTML = exec_time_feedbackContent;
+  }
+
+  const vlm_feedbackElm = document.getElementById("vlm_feedback");
+  if (vlm_feedbackElm) {
+      let vlm_feedbackContent = '';
+
+      if (plot_analyses && plot_analyses.length > 0) {
+          vlm_feedbackContent += `<h3>Plot Analysis:</h3>`;
+          plot_analyses.forEach(analysis => {
+              if (analysis && analysis.plot_path) {  // Add null check
+                  vlm_feedbackContent += `
+                      <div class="plot-analysis">
+                          <h4>Analysis for ${analysis.plot_path.split('/').pop()}</h4>
+                          <p>${analysis.analysis || 'No analysis available'}</p>
+                          <ul class="key-findings">
+                              ${(analysis.key_findings || []).map(finding => `<li>${finding}</li>`).join('')}
+                          </ul>
+                      </div>`;
+              } else {
+                  console.warn('Received invalid plot analysis:', analysis);
+                  vlm_feedbackContent += `
+                      <div class="plot-analysis">
+                          <p>Invalid plot analysis data received</p>
+                      </div>`;
+              }
+          });
+      }
+
+      // Add actionable insights if available
+      if (vlm_feedback_summary && typeof vlm_feedback_summary === 'string') {
+          vlm_feedbackContent += `
+              <div class="vlm_feedback">
+                  <h3>VLM Feedback Summary:</h3>
+                  <p>${vlm_feedback_summary}</p>
+              </div>`;
+      }
+
+      console.log("Datasets successfully tested:", datasets_successfully_tested);
+      if (datasets_successfully_tested && datasets_successfully_tested.length > 0) {
+          vlm_feedbackContent += `
+              <div id="datasets_successfully_tested">
+                  <h3>Datasets Successfully Tested:</h3>
+                  <p>${datasets_successfully_tested.join(', ')}</p>
+              </div>`;
+      }
+
+      if (!vlm_feedbackContent) {
+          vlm_feedbackContent = '<p>No insights available for this experiment.</p>';
+      }
+
+      vlm_feedbackElm.innerHTML = vlm_feedbackContent;
+  }
+
+  const datasets_successfully_testedElm = document.getElementById("datasets_successfully_tested");
+  if (datasets_successfully_testedElm) {
+      let datasets_successfully_testedContent = '';
+      if (datasets_successfully_tested && datasets_successfully_tested.length > 0) {
+          datasets_successfully_testedContent = `<h3>Datasets Successfully Tested:</h3><ul>`;
+          datasets_successfully_tested.forEach(dataset => {
+              datasets_successfully_testedContent += `<li>${dataset}</li>`;
+          });
+          datasets_successfully_testedContent += `</ul>`;
+      } else {
+          datasets_successfully_testedContent = '<p>No datasets tested yet</p>';
+      }
+      datasets_successfully_testedElm.innerHTML = datasets_successfully_testedContent;
+  }
+};
+
+// Initialize with the provided tree data
+const treeStructData = {"edges": [[0, 2], [0, 1], [0, 4], [1, 3]], "layout": [[0.5, 0.0], [0.0, 0.5], [0.5, 0.5], [0.0, 1.0], [1.0, 0.5]], "plan": ["Hyperparam tuning name: epochs. To implement hyperparameter tuning for the\nnumber of epochs in the given baseline code, I will modify the training loop to\nallow for different epoch values. This involves setting up a range of epochs to\ntest for tuning and saving the results of each training session. The code will\ntrack losses for both training and validation datasets across varying epoch\ncounts and save this data structured according to the provided format.", "Ablation name: Multi-Dataset Evaluation. To implement the ablation study for\nMulti-Dataset Evaluation, I will create two additional synthetic datasets: one\nwill include a non-linear interaction term (`y = 0.5*x1 + 0.5*x2 + 0.1*x1*x2 +\nnoise`), and the other will scale the features (`y = 3*x`). I will update the\n`DynamicEnvDataset` class to support generating these new datasets. The training\nand validation loops will be adapted to evaluate each dataset separately,\nstoring metrics, losses, predictions, and ground truths for each dataset.\nFinally, all data will be saved in the specified format.", "Ablation name: Data Augmentation Impact. The proposed implementation will\nevaluate the impact of data augmentation on the ScenarioModel's performance. Two\ntraining scenarios will be conducted: one with data augmentation applied to the\ntraining dataset (e.g., adding noise) and one without. We will compare the\ntraining and validation losses for both scenarios and store the experiment\nresults in a structured format to facilitate analysis. Lastly, the results will\nbe saved in a numpy file named 'experiment_data.npy'.", "To fix the bug with the undefined 'ScenarioModel' in the previous\nimplementation, we need to define the 'ScenarioModel' class, which is presumably\na neural network model meant to be trained. This class should inherit from\n`torch.nn.Module`, and we will need to implement the `__init__()` and\n`forward()` methods to specify the model architecture and the forward pass. By\ndoing this, we will ensure that the model can be instantiated and trained\ncorrectly.", "Seed node"], "code": ["import os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom torch.utils.data import DataLoader, Dataset, random_split\n\n# Setup working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Prepare device\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n\n# Synthetic dataset\nclass DynamicEnvDataset(Dataset):\n    def __init__(self, size=1000):\n        self.x = np.random.rand(size, 2)  # Current state with 2 features\n        self.y = self.x * 2 + np.random.normal(0, 0.1, self.x.shape)  # Future state\n\n    def __len__(self):\n        return len(self.x)\n\n    def __getitem__(self, idx):\n        return torch.tensor(self.x[idx], dtype=torch.float32), torch.tensor(\n            self.y[idx], dtype=torch.float32\n        )\n\n\n# Create dataset and dataloaders\ndataset = DynamicEnvDataset()\ntrain_size = int(0.8 * len(dataset))\nval_size = len(dataset) - train_size\ntrain_dataset, val_dataset = random_split(dataset, [train_size, val_size])\ntrain_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)\nval_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)\n\n\n# Define simple model\nclass ScenarioModel(nn.Module):\n    def __init__(self):\n        super(ScenarioModel, self).__init__()\n        self.fc1 = nn.Linear(2, 64)\n        self.fc2 = nn.Linear(64, 2)\n\n    def forward(self, x):\n        x = torch.relu(self.fc1(x))\n        return self.fc2(x)\n\n\n# Initialize experiment data for tracking\nexperiment_data = {\n    \"hyperparam_tuning_epochs\": {\n        \"dynamic_env\": {\n            \"metrics\": {\"train\": [], \"val\": []},\n            \"losses\": {\"train\": [], \"val\": []},\n            \"predictions\": [],\n            \"ground_truth\": [],\n        }\n    }\n}\n\n# Tuning epochs\nepoch_options = [5, 10, 15, 20]  # Different epoch values for tuning\n\nfor epochs in epoch_options:\n    model = ScenarioModel().to(device)  # Reinitialize model for fresh training\n    criterion = nn.MSELoss()\n    optimizer = optim.Adam(model.parameters(), lr=0.001)\n\n    # Training and validation loop\n    for epoch in range(epochs):\n        model.train()\n        train_loss = 0.0\n        for batch in train_loader:\n            inputs, targets = batch\n            inputs, targets = inputs.to(device), targets.to(device)\n\n            optimizer.zero_grad()\n            outputs = model(inputs)\n            loss = criterion(outputs, targets)\n            loss.backward()\n            optimizer.step()\n\n            train_loss += loss.item()\n\n        train_loss /= len(train_loader)\n        experiment_data[\"hyperparam_tuning_epochs\"][\"dynamic_env\"][\"losses\"][\n            \"train\"\n        ].append(train_loss)\n\n        # Validation\n        model.eval()\n        val_loss = 0.0\n        with torch.no_grad():\n            for batch in val_loader:\n                inputs, targets = batch\n                inputs, targets = inputs.to(device), targets.to(device)\n                outputs = model(inputs)\n                loss = criterion(outputs, targets)\n                val_loss += loss.item()\n\n        val_loss /= len(val_loader)\n        experiment_data[\"hyperparam_tuning_epochs\"][\"dynamic_env\"][\"losses\"][\n            \"val\"\n        ].append(val_loss)\n\n        print(f\"Epoch {epoch + 1}/{epochs}: validation_loss = {val_loss:.4f}\")\n\n# Saving experiment data\nnp.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\n", "import os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom torch.utils.data import DataLoader, Dataset, random_split\n\n# Setup working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Prepare device\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n\n# Synthetic datasets\nclass DynamicEnvDataset(Dataset):\n    def __init__(self, size=1000, dataset_type=\"linear\"):\n        self.x = np.random.rand(size, 2)  # Current state with 2 features\n        if dataset_type == \"linear\":\n            self.y = self.x * 2 + np.random.normal(\n                0, 0.1, self.x.shape\n            )  # Linear dataset\n        elif dataset_type == \"interaction\":\n            self.y = (\n                0.5 * self.x[:, 0]\n                + 0.5 * self.x[:, 1]\n                + 0.1 * self.x[:, 0] * self.x[:, 1]\n                + np.random.normal(0, 0.1, self.x.shape)\n            )  # Interaction dataset\n        elif dataset_type == \"scaling\":\n            self.y = 3 * (self.x[:, 0] + self.x[:, 1]) + np.random.normal(\n                0, 0.1, self.x.shape\n            )  # Scaling dataset\n\n    def __len__(self):\n        return len(self.x)\n\n    def __getitem__(self, idx):\n        return torch.tensor(self.x[idx], dtype=torch.float32), torch.tensor(\n            self.y[idx], dtype=torch.float32\n        )\n\n\n# Initialize experiment data for tracking\nexperiment_data = {\n    \"multi_dataset_evaluation\": {\n        \"linear\": {\n            \"metrics\": {\"train\": [], \"val\": []},\n            \"losses\": {\"train\": [], \"val\": []},\n            \"predictions\": [],\n            \"ground_truth\": [],\n        },\n        \"interaction\": {\n            \"metrics\": {\"train\": [], \"val\": []},\n            \"losses\": {\"train\": [], \"val\": []},\n            \"predictions\": [],\n            \"ground_truth\": [],\n        },\n        \"scaling\": {\n            \"metrics\": {\"train\": [], \"val\": []},\n            \"losses\": {\"train\": [], \"val\": []},\n            \"predictions\": [],\n            \"ground_truth\": [],\n        },\n    }\n}\n\n# Tuning epochs\nepoch_options = [5, 10, 15, 20]  # Different epoch values for tuning\ndatasets = [\"linear\", \"interaction\", \"scaling\"]\n\nfor dataset_name in datasets:\n    dataset = DynamicEnvDataset(dataset_type=dataset_name)\n    train_size = int(0.8 * len(dataset))\n    val_size = len(dataset) - train_size\n    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])\n    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)\n    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)\n\n    for epochs in epoch_options:\n        model = ScenarioModel().to(device)  # Reinitialize model for fresh training\n        criterion = nn.MSELoss()\n        optimizer = optim.Adam(model.parameters(), lr=0.001)\n\n        # Training and validation loop\n        for epoch in range(epochs):\n            model.train()\n            train_loss = 0.0\n            for batch in train_loader:\n                inputs, targets = batch\n                inputs, targets = inputs.to(device), targets.to(device)\n\n                optimizer.zero_grad()\n                outputs = model(inputs)\n                loss = criterion(outputs, targets)\n                loss.backward()\n                optimizer.step()\n\n                train_loss += loss.item()\n\n            train_loss /= len(train_loader)\n            experiment_data[\"multi_dataset_evaluation\"][dataset_name][\"losses\"][\n                \"train\"\n            ].append(train_loss)\n\n            # Validation\n            model.eval()\n            val_loss = 0.0\n            with torch.no_grad():\n                for batch in val_loader:\n                    inputs, targets = batch\n                    inputs, targets = inputs.to(device), targets.to(device)\n                    outputs = model(inputs)\n                    loss = criterion(outputs, targets)\n                    val_loss += loss.item()\n\n            val_loss /= len(val_loader)\n            experiment_data[\"multi_dataset_evaluation\"][dataset_name][\"losses\"][\n                \"val\"\n            ].append(val_loss)\n\n            print(\n                f\"Dataset: {dataset_name}, Epoch {epoch + 1}/{epochs}: validation_loss = {val_loss:.4f}\"\n            )\n\n    # Store predictions and ground truths\n    model.eval()\n    with torch.no_grad():\n        for inputs, targets in val_loader:\n            inputs, targets = inputs.to(device), targets.to(device)\n            outputs = model(inputs)\n            experiment_data[\"multi_dataset_evaluation\"][dataset_name][\n                \"predictions\"\n            ].extend(outputs.cpu().numpy())\n            experiment_data[\"multi_dataset_evaluation\"][dataset_name][\n                \"ground_truth\"\n            ].extend(targets.cpu().numpy())\n        experiment_data[\"multi_dataset_evaluation\"][dataset_name][\"predictions\"] = (\n            np.array(\n                experiment_data[\"multi_dataset_evaluation\"][dataset_name][\"predictions\"]\n            )\n        )\n        experiment_data[\"multi_dataset_evaluation\"][dataset_name][\"ground_truth\"] = (\n            np.array(\n                experiment_data[\"multi_dataset_evaluation\"][dataset_name][\n                    \"ground_truth\"\n                ]\n            )\n        )\n\n# Saving experiment data\nnp.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\n", "import os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom torch.utils.data import DataLoader, Dataset, random_split\n\n# Setup working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Prepare device\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n\n# Synthetic dataset\nclass DynamicEnvDataset(Dataset):\n    def __init__(self, size=1000, augment=False):\n        self.x = np.random.rand(size, 2)  # Current state with 2 features\n        self.y = self.x * 2 + np.random.normal(0, 0.1, self.x.shape)  # Future state\n        if augment:\n            self.x += np.random.normal(\n                0, 0.05, self.x.shape\n            )  # Add noise for augmentation\n\n    def __len__(self):\n        return len(self.x)\n\n    def __getitem__(self, idx):\n        return torch.tensor(self.x[idx], dtype=torch.float32), torch.tensor(\n            self.y[idx], dtype=torch.float32\n        )\n\n\n# Function to train the model and record metrics\ndef train_model(train_loader, val_loader, epochs):\n    model = ScenarioModel().to(device)\n    criterion = nn.MSELoss()\n    optimizer = optim.Adam(model.parameters(), lr=0.001)\n    experiment_results = {\n        \"losses\": {\"train\": [], \"val\": []},\n        \"predictions\": [],\n        \"ground_truth\": [],\n    }\n\n    # Training and validation loop\n    for epoch in range(epochs):\n        model.train()\n        train_loss = 0.0\n        for batch in train_loader:\n            inputs, targets = batch\n            inputs, targets = inputs.to(device), targets.to(device)\n\n            optimizer.zero_grad()\n            outputs = model(inputs)\n            loss = criterion(outputs, targets)\n            loss.backward()\n            optimizer.step()\n\n            train_loss += loss.item()\n\n        train_loss /= len(train_loader)\n        experiment_results[\"losses\"][\"train\"].append(train_loss)\n\n        # Validation\n        model.eval()\n        val_loss = 0.0\n        with torch.no_grad():\n            for batch in val_loader:\n                inputs, targets = batch\n                inputs, targets = inputs.to(device), targets.to(device)\n                outputs = model(inputs)\n                loss = criterion(outputs, targets)\n                val_loss += loss.item()\n                experiment_results[\"predictions\"].append(outputs.cpu().numpy())\n                experiment_results[\"ground_truth\"].append(targets.cpu().numpy())\n\n        val_loss /= len(val_loader)\n        experiment_results[\"losses\"][\"val\"].append(val_loss)\n\n        print(f\"Epoch {epoch + 1}/{epochs}: validation_loss = {val_loss:.4f}\")\n\n    return experiment_results\n\n\n# Define simple model\nclass ScenarioModel(nn.Module):\n    def __init__(self):\n        super(ScenarioModel, self).__init__()\n        self.fc1 = nn.Linear(2, 64)\n        self.fc2 = nn.Linear(64, 2)\n\n    def forward(self, x):\n        x = torch.relu(self.fc1(x))\n        return self.fc2(x)\n\n\n# Create datasets and dataloaders for both augmented and non-augmented\ndatasets = {\n    \"Without Augmentation\": DynamicEnvDataset(),\n    \"With Augmentation\": DynamicEnvDataset(augment=True),\n}\n\nexperiment_data = {\"data_augmentation_impact\": {}}\n\n# Loop through datasets\nfor name, dataset in datasets.items():\n    train_size = int(0.8 * len(dataset))\n    val_size = len(dataset) - train_size\n    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])\n    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)\n    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)\n\n    experiment_data[\"data_augmentation_impact\"][name] = train_model(\n        train_loader, val_loader, epochs=10\n    )\n\n# Saving experiment data\nnp.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\n", "import os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom torch.utils.data import DataLoader, Dataset, random_split\n\n# Setup working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Prepare device\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n\n# Model definition\nclass ScenarioModel(nn.Module):\n    def __init__(self):\n        super(ScenarioModel, self).__init__()\n        self.fc1 = nn.Linear(2, 64)\n        self.fc2 = nn.Linear(64, 32)\n        self.fc3 = nn.Linear(32, 2)  # Output to match the data shape\n\n    def forward(self, x):\n        x = torch.relu(self.fc1(x))\n        x = torch.relu(self.fc2(x))\n        return self.fc3(x)\n\n\n# Synthetic datasets\nclass DynamicEnvDataset(Dataset):\n    def __init__(self, size=1000, dataset_type=\"linear\"):\n        self.x = np.random.rand(size, 2)  # Current state with 2 features\n        if dataset_type == \"linear\":\n            self.y = self.x * 2 + np.random.normal(\n                0, 0.1, self.x.shape\n            )  # Linear dataset\n        elif dataset_type == \"interaction\":\n            self.y = (\n                0.5 * self.x[:, 0]\n                + 0.5 * self.x[:, 1]\n                + 0.1 * self.x[:, 0] * self.x[:, 1]\n                + np.random.normal(0, 0.1, self.x.shape)\n            )  # Interaction dataset\n        elif dataset_type == \"scaling\":\n            self.y = 3 * (self.x[:, 0] + self.x[:, 1]) + np.random.normal(\n                0, 0.1, self.x.shape\n            )  # Scaling dataset\n\n    def __len__(self):\n        return len(self.x)\n\n    def __getitem__(self, idx):\n        return torch.tensor(self.x[idx], dtype=torch.float32), torch.tensor(\n            self.y[idx], dtype=torch.float32\n        )\n\n\n# Initialize experiment data for tracking\nexperiment_data = {\n    \"multi_dataset_evaluation\": {\n        \"linear\": {\n            \"metrics\": {\"train\": [], \"val\": []},\n            \"losses\": {\"train\": [], \"val\": []},\n            \"predictions\": [],\n            \"ground_truth\": [],\n        },\n        \"interaction\": {\n            \"metrics\": {\"train\": [], \"val\": []},\n            \"losses\": {\"train\": [], \"val\": []},\n            \"predictions\": [],\n            \"ground_truth\": [],\n        },\n        \"scaling\": {\n            \"metrics\": {\"train\": [], \"val\": []},\n            \"losses\": {\"train\": [], \"val\": []},\n            \"predictions\": [],\n            \"ground_truth\": [],\n        },\n    }\n}\n\n# Tuning epochs\nepoch_options = [5, 10, 15, 20]  # Different epoch values for tuning\ndatasets = [\"linear\", \"interaction\", \"scaling\"]\n\nfor dataset_name in datasets:\n    dataset = DynamicEnvDataset(dataset_type=dataset_name)\n    train_size = int(0.8 * len(dataset))\n    val_size = len(dataset) - train_size\n    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])\n    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)\n    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)\n\n    for epochs in epoch_options:\n        model = ScenarioModel().to(device)  # Reinitialize model for fresh training\n        criterion = nn.MSELoss()\n        optimizer = optim.Adam(model.parameters(), lr=0.001)\n\n        # Training and validation loop\n        for epoch in range(epochs):\n            model.train()\n            train_loss = 0.0\n            for batch in train_loader:\n                inputs, targets = batch\n                inputs, targets = inputs.to(device), targets.to(device)\n\n                optimizer.zero_grad()\n                outputs = model(inputs)\n                loss = criterion(outputs, targets)\n                loss.backward()\n                optimizer.step()\n\n                train_loss += loss.item()\n\n            train_loss /= len(train_loader)\n            experiment_data[\"multi_dataset_evaluation\"][dataset_name][\"losses\"][\n                \"train\"\n            ].append(train_loss)\n\n            # Validation\n            model.eval()\n            val_loss = 0.0\n            with torch.no_grad():\n                for batch in val_loader:\n                    inputs, targets = batch\n                    inputs, targets = inputs.to(device), targets.to(device)\n                    outputs = model(inputs)\n                    loss = criterion(outputs, targets)\n                    val_loss += loss.item()\n\n            val_loss /= len(val_loader)\n            experiment_data[\"multi_dataset_evaluation\"][dataset_name][\"losses\"][\n                \"val\"\n            ].append(val_loss)\n\n            print(\n                f\"Dataset: {dataset_name}, Epoch {epoch + 1}/{epochs}: validation_loss = {val_loss:.4f}\"\n            )\n\n    # Store predictions and ground truths\n    model.eval()\n    with torch.no_grad():\n        for inputs, targets in val_loader:\n            inputs, targets = inputs.to(device), targets.to(device)\n            outputs = model(inputs)\n            experiment_data[\"multi_dataset_evaluation\"][dataset_name][\n                \"predictions\"\n            ].extend(outputs.cpu().numpy())\n            experiment_data[\"multi_dataset_evaluation\"][dataset_name][\n                \"ground_truth\"\n            ].extend(targets.cpu().numpy())\n        experiment_data[\"multi_dataset_evaluation\"][dataset_name][\"predictions\"] = (\n            np.array(\n                experiment_data[\"multi_dataset_evaluation\"][dataset_name][\"predictions\"]\n            )\n        )\n        experiment_data[\"multi_dataset_evaluation\"][dataset_name][\"ground_truth\"] = (\n            np.array(\n                experiment_data[\"multi_dataset_evaluation\"][dataset_name][\n                    \"ground_truth\"\n                ]\n            )\n        )\n\n# Saving experiment data\nnp.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\n", "# Set random seed\nimport random\nimport numpy as np\nimport torch\n\nseed = 0\nrandom.seed(seed)\nnp.random.seed(seed)\ntorch.manual_seed(seed)\nif torch.cuda.is_available():\n    torch.cuda.manual_seed(seed)\n\nimport os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom torch.utils.data import DataLoader, Dataset, random_split\n\n# Setup working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Prepare device\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n\n# Synthetic dataset\nclass DynamicEnvDataset(Dataset):\n    def __init__(self, size=1000):\n        self.x = np.random.rand(size, 2)  # Current state with 2 features\n        self.y = self.x * 2 + np.random.normal(0, 0.1, self.x.shape)  # Future state\n\n    def __len__(self):\n        return len(self.x)\n\n    def __getitem__(self, idx):\n        return torch.tensor(self.x[idx], dtype=torch.float32), torch.tensor(\n            self.y[idx], dtype=torch.float32\n        )\n\n\n# Create dataset and dataloaders\ndataset = DynamicEnvDataset()\ntrain_size = int(0.8 * len(dataset))\nval_size = len(dataset) - train_size\ntrain_dataset, val_dataset = random_split(dataset, [train_size, val_size])\ntrain_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)\nval_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)\n\n\n# Define simple model\nclass ScenarioModel(nn.Module):\n    def __init__(self):\n        super(ScenarioModel, self).__init__()\n        self.fc1 = nn.Linear(2, 64)\n        self.fc2 = nn.Linear(64, 2)\n\n    def forward(self, x):\n        x = torch.relu(self.fc1(x))\n        return self.fc2(x)\n\n\n# Initialize experiment data for tracking\nexperiment_data = {\n    \"hyperparam_tuning_epochs\": {\n        \"dynamic_env\": {\n            \"metrics\": {\"train\": [], \"val\": []},\n            \"losses\": {\"train\": [], \"val\": []},\n            \"predictions\": [],\n            \"ground_truth\": [],\n        }\n    }\n}\n\n# Tuning epochs\nepoch_options = [5, 10, 15, 20]  # Different epoch values for tuning\n\nfor epochs in epoch_options:\n    model = ScenarioModel().to(device)  # Reinitialize model for fresh training\n    criterion = nn.MSELoss()\n    optimizer = optim.Adam(model.parameters(), lr=0.001)\n\n    # Training and validation loop\n    for epoch in range(epochs):\n        model.train()\n        train_loss = 0.0\n        for batch in train_loader:\n            inputs, targets = batch\n            inputs, targets = inputs.to(device), targets.to(device)\n\n            optimizer.zero_grad()\n            outputs = model(inputs)\n            loss = criterion(outputs, targets)\n            loss.backward()\n            optimizer.step()\n\n            train_loss += loss.item()\n\n        train_loss /= len(train_loader)\n        experiment_data[\"hyperparam_tuning_epochs\"][\"dynamic_env\"][\"losses\"][\n            \"train\"\n        ].append(train_loss)\n\n        # Validation\n        model.eval()\n        val_loss = 0.0\n        with torch.no_grad():\n            for batch in val_loader:\n                inputs, targets = batch\n                inputs, targets = inputs.to(device), targets.to(device)\n                outputs = model(inputs)\n                loss = criterion(outputs, targets)\n                val_loss += loss.item()\n\n        val_loss /= len(val_loader)\n        experiment_data[\"hyperparam_tuning_epochs\"][\"dynamic_env\"][\"losses\"][\n            \"val\"\n        ].append(val_loss)\n\n        print(f\"Epoch {epoch + 1}/{epochs}: validation_loss = {val_loss:.4f}\")\n\n# Saving experiment data\nnp.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\n"], "term_out": ["['Using device: cuda', '\\n', 'Epoch 1/5: validation_loss = 1.0383', '\\n', 'Epoch\n2/5: validation_loss = 0.6049', '\\n', 'Epoch 3/5: validation_loss = 0.3451',\n'\\n', 'Epoch 4/5: validation_loss = 0.2295', '\\n', 'Epoch 5/5: validation_loss =\n0.1712', '\\n', 'Epoch 1/10: validation_loss = 0.5750', '\\n', 'Epoch 2/10:\nvalidation_loss = 0.3173', '\\n', 'Epoch 3/10: validation_loss = 0.2212', '\\n',\n'Epoch 4/10: validation_loss = 0.1661', '\\n', 'Epoch 5/10: validation_loss =\n0.1189', '\\n', 'Epoch 6/10: validation_loss = 0.0788', '\\n', 'Epoch 7/10:\nvalidation_loss = 0.0481', '\\n', 'Epoch 8/10: validation_loss = 0.0281', '\\n',\n'Epoch 9/10: validation_loss = 0.0179', '\\n', 'Epoch 10/10: validation_loss =\n0.0137', '\\n', 'Epoch 1/15: validation_loss = 1.1611', '\\n', 'Epoch 2/15:\nvalidation_loss = 0.6011', '\\n', 'Epoch 3/15: validation_loss = 0.3271', '\\n',\n'Epoch 4/15: validation_loss = 0.2094', '\\n', 'Epoch 5/15: validation_loss =\n0.1516', '\\n', 'Epoch 6/15: validation_loss = 0.1100', '\\n', 'Epoch 7/15:\nvalidation_loss = 0.0776', '\\n', 'Epoch 8/15: validation_loss = 0.0542', '\\n',\n'Epoch 9/15: validation_loss = 0.0385', '\\n', 'Epoch 10/15: validation_loss =\n0.0271', '\\n', 'Epoch 11/15: validation_loss = 0.0198', '\\n', 'Epoch 12/15:\nvalidation_loss = 0.0153', '\\n', 'Epoch 13/15: validation_loss = 0.0127', '\\n',\n'Epoch 14/15: validation_loss = 0.0114', '\\n', 'Epoch 15/15: validation_loss =\n0.0108', '\\n', 'Epoch 1/20: validation_loss = 0.5443', '\\n', 'Epoch 2/20:\nvalidation_loss = 0.3072', '\\n', 'Epoch 3/20: validation_loss = 0.2444', '\\n',\n'Epoch 4/20: validation_loss = 0.1983', '\\n', 'Epoch 5/20: validation_loss =\n0.1561', '\\n', 'Epoch 6/20: validation_loss = 0.1165', '\\n', 'Epoch 7/20:\nvalidation_loss = 0.0810', '\\n', 'Epoch 8/20: validation_loss = 0.0539', '\\n',\n'Epoch 9/20: validation_loss = 0.0358', '\\n', 'Epoch 10/20: validation_loss =\n0.0241', '\\n', 'Epoch 11/20: validation_loss = 0.0172', '\\n', 'Epoch 12/20:\nvalidation_loss = 0.0134', '\\n', 'Epoch 13/20: validation_loss = 0.0116', '\\n',\n'Epoch 14/20: validation_loss = 0.0107', '\\n', 'Epoch 15/20: validation_loss =\n0.0103', '\\n', 'Epoch 16/20: validation_loss = 0.0101', '\\n', 'Epoch 17/20:\nvalidation_loss = 0.0100', '\\n', 'Epoch 18/20: validation_loss = 0.0100', '\\n',\n'Epoch 19/20: validation_loss = 0.0099', '\\n', 'Epoch 20/20: validation_loss =\n0.0099', '\\n', 'Execution time: 4 seconds seconds (time limit is 10 minutes).']", "['Using device: cuda', '\\n', 'Traceback (most recent call last):\\n  File\n\"runfile.py\", line 83, in <module>\\n    model = ScenarioModel().to(device)  #\nReinitialize model for fresh training\\n            ^^^^^^^^^^^^^\\nNameError:\nname \\'ScenarioModel\\' is not defined\\n', 'Execution time: a moment seconds\n(time limit is 10 minutes).']", "['Using device: cuda', '\\n', 'Epoch 1/10: validation_loss = 1.0383', '\\n',\n'Epoch 2/10: validation_loss = 0.6049', '\\n', 'Epoch 3/10: validation_loss =\n0.3451', '\\n', 'Epoch 4/10: validation_loss = 0.2295', '\\n', 'Epoch 5/10:\nvalidation_loss = 0.1712', '\\n', 'Epoch 6/10: validation_loss = 0.1258', '\\n',\n'Epoch 7/10: validation_loss = 0.0896', '\\n', 'Epoch 8/10: validation_loss =\n0.0610', '\\n', 'Epoch 9/10: validation_loss = 0.0421', '\\n', 'Epoch 10/10:\nvalidation_loss = 0.0296', '\\n', 'Epoch 1/10: validation_loss = 0.7636', '\\n',\n'Epoch 2/10: validation_loss = 0.3800', '\\n', 'Epoch 3/10: validation_loss =\n0.2480', '\\n', 'Epoch 4/10: validation_loss = 0.1837', '\\n', 'Epoch 5/10:\nvalidation_loss = 0.1302', '\\n', 'Epoch 6/10: validation_loss = 0.0831', '\\n',\n'Epoch 7/10: validation_loss = 0.0499', '\\n', 'Epoch 8/10: validation_loss =\n0.0331', '\\n', 'Epoch 9/10: validation_loss = 0.0259', '\\n', 'Epoch 10/10:\nvalidation_loss = 0.0235', '\\n', 'Execution time: 2 seconds seconds (time limit\nis 10 minutes).']", "['Using device: cuda', '\\n', 'Dataset: linear, Epoch 1/5: validation_loss =\n1.0343', '\\n', 'Dataset: linear, Epoch 2/5: validation_loss = 0.5150', '\\n',\n'Dataset: linear, Epoch 3/5: validation_loss = 0.2170', '\\n', 'Dataset: linear,\nEpoch 4/5: validation_loss = 0.1540', '\\n', 'Dataset: linear, Epoch 5/5:\nvalidation_loss = 0.1068', '\\n', 'Dataset: linear, Epoch 1/10: validation_loss =\n0.4256', '\\n', 'Dataset: linear, Epoch 2/10: validation_loss = 0.2032', '\\n',\n'Dataset: linear, Epoch 3/10: validation_loss = 0.1417', '\\n', 'Dataset: linear,\nEpoch 4/10: validation_loss = 0.0934', '\\n', 'Dataset: linear, Epoch 5/10:\nvalidation_loss = 0.0562', '\\n', 'Dataset: linear, Epoch 6/10: validation_loss =\n0.0338', '\\n', 'Dataset: linear, Epoch 7/10: validation_loss = 0.0211', '\\n',\n'Dataset: linear, Epoch 8/10: validation_loss = 0.0147', '\\n', 'Dataset: linear,\nEpoch 9/10: validation_loss = 0.0122', '\\n', 'Dataset: linear, Epoch 10/10:\nvalidation_loss = 0.0114', '\\n', 'Dataset: linear, Epoch 1/15: validation_loss =\n0.6413', '\\n', 'Dataset: linear, Epoch 2/15: validation_loss = 0.2961', '\\n',\n'Dataset: linear, Epoch 3/15: validation_loss = 0.2106', '\\n', 'Dataset: linear,\nEpoch 4/15: validation_loss = 0.1425', '\\n', 'Dataset: linear, Epoch 5/15:\nvalidation_loss = 0.0736', '\\n', 'Dataset: linear, Epoch 6/15: validation_loss =\n0.0310', '\\n', 'Dataset: linear, Epoch 7/15: validation_loss = 0.0147', '\\n',\n'Dataset: linear, Epoch 8/15: validation_loss = 0.0111', '\\n', 'Dataset: linear,\nEpoch 9/15: validation_loss = 0.0104', '\\n', 'Dataset: linear, Epoch 10/15:\nvalidation_loss = 0.0105', '\\n', 'Dataset: linear, Epoch 11/15: validation_loss\n= 0.0101', '\\n', 'Dataset: linear, Epoch 12/15: validation_loss = 0.0101', '\\n',\n'Dataset: linear, Epoch 13/15: validation_loss = 0.0100', '\\n', 'Dataset:\nlinear, Epoch 14/15: validation_loss = 0.0099', '\\n', 'Dataset: linear, Epoch\n15/15: validation_loss = 0.0098', '\\n', 'Dataset: linear, Epoch 1/20:\nvalidation_loss = 0.4313', '\\n', 'Dataset: linear, Epoch 2/20: validation_loss =\n0.2362', '\\n', 'Dataset: linear, Epoch 3/20: validation_loss = 0.1581', '\\n',\n'Dataset: linear, Epoch 4/20: validation_loss = 0.0903', '\\n', 'Dataset: linear,\nEpoch 5/20: validation_loss = 0.0423', '\\n', 'Dataset: linear, Epoch 6/20:\nvalidation_loss = 0.0239', '\\n', 'Dataset: linear, Epoch 7/20: validation_loss =\n0.0152', '\\n', 'Dataset: linear, Epoch 8/20: validation_loss = 0.0120', '\\n',\n'Dataset: linear, Epoch 9/20: validation_loss = 0.0110', '\\n', 'Dataset: linear,\nEpoch 10/20: validation_loss = 0.0106', '\\n', 'Dataset: linear, Epoch 11/20:\nvalidation_loss = 0.0105', '\\n', 'Dataset: linear, Epoch 12/20: validation_loss\n= 0.0103', '\\n', 'Dataset: linear, Epoch 13/20: validation_loss = 0.0105', '\\n',\n'Dataset: linear, Epoch 14/20: validation_loss = 0.0103', '\\n', 'Dataset:\nlinear, Epoch 15/20: validation_loss = 0.0101', '\\n', 'Dataset: linear, Epoch\n16/20: validation_loss = 0.0101', '\\n', 'Dataset: linear, Epoch 17/20:\nvalidation_loss = 0.0101', '\\n', 'Dataset: linear, Epoch 18/20: validation_loss\n= 0.0101', '\\n', 'Dataset: linear, Epoch 19/20: validation_loss = 0.0104', '\\n',\n'Dataset: linear, Epoch 20/20: validation_loss = 0.0101', '\\n', 'Traceback (most\nrecent call last):\\n  File \"runfile.py\", line 89, in <module>\\n    dataset =\nDynamicEnvDataset(dataset_type=dataset_name)\\n\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\\n  File \"runfile.py\", line 41, in\n__init__\\n    0.5 * self.x[:, 0]\\nValueError: operands could not be broadcast\ntogether with shapes (1000,) (1000,2) \\n', 'Execution time: 4 seconds seconds\n(time limit is 10 minutes).']", "['Using device: cuda', '\\n', 'Epoch 1/5: validation_loss = 0.6774', '\\n', 'Epoch\n2/5: validation_loss = 0.4089', '\\n', 'Epoch 3/5: validation_loss = 0.2864',\n'\\n', 'Epoch 4/5: validation_loss = 0.2269', '\\n', 'Epoch 5/5: validation_loss =\n0.1759', '\\n', 'Epoch 1/10: validation_loss = 0.2841', '\\n', 'Epoch 2/10:\nvalidation_loss = 0.1661', '\\n', 'Epoch 3/10: validation_loss = 0.1305', '\\n',\n'Epoch 4/10: validation_loss = 0.0945', '\\n', 'Epoch 5/10: validation_loss =\n0.0646', '\\n', 'Epoch 6/10: validation_loss = 0.0418', '\\n', 'Epoch 7/10:\nvalidation_loss = 0.0278', '\\n', 'Epoch 8/10: validation_loss = 0.0197', '\\n',\n'Epoch 9/10: validation_loss = 0.0156', '\\n', 'Epoch 10/10: validation_loss =\n0.0130', '\\n', 'Epoch 1/15: validation_loss = 0.7000', '\\n', 'Epoch 2/15:\nvalidation_loss = 0.3228', '\\n', 'Epoch 3/15: validation_loss = 0.2096', '\\n',\n'Epoch 4/15: validation_loss = 0.1636', '\\n', 'Epoch 5/15: validation_loss =\n0.1211', '\\n', 'Epoch 6/15: validation_loss = 0.0864', '\\n', 'Epoch 7/15:\nvalidation_loss = 0.0601', '\\n', 'Epoch 8/15: validation_loss = 0.0415', '\\n',\n'Epoch 9/15: validation_loss = 0.0286', '\\n', 'Epoch 10/15: validation_loss =\n0.0203', '\\n', 'Epoch 11/15: validation_loss = 0.0153', '\\n', 'Epoch 12/15:\nvalidation_loss = 0.0124', '\\n', 'Epoch 13/15: validation_loss = 0.0108', '\\n',\n'Epoch 14/15: validation_loss = 0.0100', '\\n', 'Epoch 15/15: validation_loss =\n0.0096', '\\n', 'Epoch 1/20: validation_loss = 0.5907', '\\n', 'Epoch 2/20:\nvalidation_loss = 0.2902', '\\n', 'Epoch 3/20: validation_loss = 0.1883', '\\n',\n'Epoch 4/20: validation_loss = 0.1416', '\\n', 'Epoch 5/20: validation_loss =\n0.0986', '\\n', 'Epoch 6/20: validation_loss = 0.0629', '\\n', 'Epoch 7/20:\nvalidation_loss = 0.0393', '\\n', 'Epoch 8/20: validation_loss = 0.0250', '\\n',\n'Epoch 9/20: validation_loss = 0.0177', '\\n', 'Epoch 10/20: validation_loss =\n0.0137', '\\n', 'Epoch 11/20: validation_loss = 0.0118', '\\n', 'Epoch 12/20:\nvalidation_loss = 0.0107', '\\n', 'Epoch 13/20: validation_loss = 0.0101', '\\n',\n'Epoch 14/20: validation_loss = 0.0098', '\\n', 'Epoch 15/20: validation_loss =\n0.0096', '\\n', 'Epoch 16/20: validation_loss = 0.0093', '\\n', 'Epoch 17/20:\nvalidation_loss = 0.0091', '\\n', 'Epoch 18/20: validation_loss = 0.0091', '\\n',\n'Epoch 19/20: validation_loss = 0.0089', '\\n', 'Epoch 20/20: validation_loss =\n0.0089', '\\n', 'Execution time: 4 seconds seconds (time limit is 10 minutes).']"], "analysis": ["", "The execution failed due to a NameError: 'ScenarioModel' is not defined. This\nindicates that the model class 'ScenarioModel' has not been defined or imported\nin the script. To fix this, ensure that the 'ScenarioModel' class is properly\ndefined before it is instantiated.", "", "The execution output indicates a ValueError due to a broadcasting issue in the\nDynamicEnvDataset class's __init__ method. Specifically, in the 'interaction'\ndataset type, the expression '0.5 * self.x[:, 0]' attempts to perform an\noperation that requires the shapes to align, but 'self.x[:, 0]' has shape\n(1000,) while 'self.x' has shape (1000, 2). To fix this, ensure that the\noperations involving 'self.x' are correctly aligned, possibly by reshaping or\nadjusting the computation to avoid broadcasting errors.", ""], "exc_type": [null, "NameError", null, "ValueError", null], "exc_info": [{"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}, {"severity": "error", "code": "BLOCKED_CALL", "detail": "Call to blocked function 'model.eval'", "location": "line 95"}]}}, {"AI Scientist Execution Info": {"args": ["name 'ScenarioModel' is not defined"], "name": "ScenarioModel"}, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}, {"severity": "error", "code": "BLOCKED_CALL", "detail": "Call to blocked function 'model.eval'", "location": "line 109"}, {"severity": "error", "code": "BLOCKED_CALL", "detail": "Call to blocked function 'model.eval'", "location": "line 129"}]}}, {"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}, {"severity": "error", "code": "BLOCKED_CALL", "detail": "Call to blocked function 'model.eval'", "location": "line 67"}]}}, {"AI Scientist Execution Info": {"args": ["operands could not be broadcast together with shapes (1000,) (1000,2) "]}, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}, {"severity": "error", "code": "BLOCKED_CALL", "detail": "Call to blocked function 'model.eval'", "location": "line 123"}, {"severity": "error", "code": "BLOCKED_CALL", "detail": "Call to blocked function 'model.eval'", "location": "line 143"}]}}, {"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 13"}, {"severity": "error", "code": "BLOCKED_CALL", "detail": "Call to blocked function 'model.eval'", "location": "line 107"}]}}], "exc_stack": [null, [["/content/drive/MyDrive/AI-Scientist-v2/ai_scientist/treesearch/interpreter.py", 168, "_run_session", "exec(compile(code, self.agent_file_name, \"exec\"), global_scope)"], ["runfile.py", 83, "<module>", "model = ScenarioModel().to(device)  # Reinitialize model for fresh training"]], null, [["/content/drive/MyDrive/AI-Scientist-v2/ai_scientist/treesearch/interpreter.py", 168, "_run_session", "exec(compile(code, self.agent_file_name, \"exec\"), global_scope)"], ["runfile.py", 89, "<module>", "dataset = DynamicEnvDataset(dataset_type=dataset_name)"], ["runfile.py", 41, "__init__", "0.5 * self.x[:, 0]"]], null], "exp_name": "0-run", "metrics": [{"metric_names": [{"metric_name": "final training loss", "lower_is_better": true, "description": "The final training loss value after training is complete.", "data": [{"dataset_name": "dynamic_env", "final_value": 0.0107, "best_value": 0.0107}]}, {"metric_name": "final validation loss", "lower_is_better": true, "description": "The final validation loss value after training is complete.", "data": [{"dataset_name": "dynamic_env", "final_value": 0.0099, "best_value": 0.0099}]}]}, {"metric_names": [{"metric_name": "value", "lower_is_better": true, "description": "", "data": [{"dataset_name": "default", "final_value": null, "best_value": null}]}]}, {"metric_names": [{"metric_name": "training loss", "lower_is_better": true, "description": "The loss value during training, lower is better.", "data": [{"dataset_name": "Without Augmentation", "final_value": 0.0372, "best_value": 0.0372}, {"dataset_name": "With Augmentation", "final_value": 0.0214, "best_value": 0.0214}]}, {"metric_name": "validation loss", "lower_is_better": true, "description": "The loss value during validation, lower is better.", "data": [{"dataset_name": "Without Augmentation", "final_value": 0.0296, "best_value": 0.0296}, {"dataset_name": "With Augmentation", "final_value": 0.0235, "best_value": 0.0235}]}]}, {"metric_names": [{"metric_name": "value", "lower_is_better": true, "description": "", "data": [{"dataset_name": "default", "final_value": null, "best_value": null}]}]}, {"metric_names": [{"metric_name": "training loss", "lower_is_better": true, "description": "The loss calculated during training phase.", "data": [{"dataset_name": "dynamic_env", "final_value": 0.0107, "best_value": 0.0107}]}, {"metric_name": "validation loss", "lower_is_better": true, "description": "The loss calculated during validation phase.", "data": [{"dataset_name": "dynamic_env", "final_value": 0.0089, "best_value": 0.0089}]}]}], "is_best_node": [true, false, false, false, false], "plots": [["../../logs/0-run/experiment_results/experiment_9a3a3c84191d40e9902be1df546f8a55_proc_1586/training_loss_dynamic_env.png", "../../logs/0-run/experiment_results/experiment_9a3a3c84191d40e9902be1df546f8a55_proc_1586/validation_loss_dynamic_env.png"], [], ["../../logs/0-run/experiment_results/experiment_543de4f330e941d3a9d1d6b3ef284017_proc_3591/Without Augmentation_loss_curves.png", "../../logs/0-run/experiment_results/experiment_543de4f330e941d3a9d1d6b3ef284017_proc_3591/Without Augmentation_gt_vs_generated.png", "../../logs/0-run/experiment_results/experiment_543de4f330e941d3a9d1d6b3ef284017_proc_3591/With Augmentation_loss_curves.png", "../../logs/0-run/experiment_results/experiment_543de4f330e941d3a9d1d6b3ef284017_proc_3591/With Augmentation_gt_vs_generated.png"], [], ["../../logs/0-run/experiment_results/experiment_470aebf989294e159aa19c228ff1d303_proc_3591/training_loss_dynamic_env.png", "../../logs/0-run/experiment_results/experiment_470aebf989294e159aa19c228ff1d303_proc_3591/validation_loss_dynamic_env.png"]], "plot_paths": [["experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_9a3a3c84191d40e9902be1df546f8a55_proc_1586/training_loss_dynamic_env.png", "experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_9a3a3c84191d40e9902be1df546f8a55_proc_1586/validation_loss_dynamic_env.png"], [], ["experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_543de4f330e941d3a9d1d6b3ef284017_proc_3591/Without Augmentation_loss_curves.png", "experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_543de4f330e941d3a9d1d6b3ef284017_proc_3591/Without Augmentation_gt_vs_generated.png", "experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_543de4f330e941d3a9d1d6b3ef284017_proc_3591/With Augmentation_loss_curves.png", "experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_543de4f330e941d3a9d1d6b3ef284017_proc_3591/With Augmentation_gt_vs_generated.png"], [], ["experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_470aebf989294e159aa19c228ff1d303_proc_3591/training_loss_dynamic_env.png", "experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_470aebf989294e159aa19c228ff1d303_proc_3591/validation_loss_dynamic_env.png"]], "plot_analyses": [[{"analysis": "The training loss plot shows a significant fluctuation in the early epochs, indicating potential instability during the initial training phase. However, after around 15 epochs, the loss trend stabilizes and decreases steadily, suggesting that the model is learning effectively. The final training loss appears to converge towards a low value, indicating successful learning and adaptation of the model to the training data.", "plot_path": "experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_9a3a3c84191d40e9902be1df546f8a55_proc_1586/training_loss_dynamic_env.png"}, {"analysis": "The validation loss plot mirrors the training loss trend, with initial fluctuations followed by a stabilization phase. This indicates that the model's performance on unseen data improves as training progresses. The validation loss also decreases, suggesting that the model is generalizing well to the validation dataset. The gap between training and validation loss is minimal, which is a positive sign for overfitting.", "plot_path": "experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_9a3a3c84191d40e9902be1df546f8a55_proc_1586/validation_loss_dynamic_env.png"}], [], [{"analysis": "The scatter plot shows a significant overlap between the ground truth and generated samples. While there are clusters of generated samples that align with the ground truth, there are also areas where generated samples are densely packed, indicating that the model may struggle to capture the full variability of the data. This could affect its performance in decision-making tasks, as it may not simulate all plausible futures accurately.", "plot_path": "experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_543de4f330e941d3a9d1d6b3ef284017_proc_3591/Without Augmentation_loss_curves.png"}, {"analysis": "In this scatter plot, the generated samples show a more dispersed distribution compared to the previous plot. There is still overlap with the ground truth, but the augmentation seems to help in generating a wider variety of plausible scenarios. This could enhance the model's ability to simulate diverse futures, which is crucial for effective decision-making in dynamic environments.", "plot_path": "experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_543de4f330e941d3a9d1d6b3ef284017_proc_3591/Without Augmentation_gt_vs_generated.png"}], [], [{"analysis": "The validation loss plot also exhibits a decreasing trend, mirroring the training loss pattern. It starts higher but shows improvement, indicating that the model is generalizing well to unseen data. The fluctuations in validation loss suggest that while the model is learning, it might not be fully consistent across all epochs, which could indicate overfitting if the training loss continues to decrease while validation loss increases in future epochs.", "plot_path": "experiments/2025-11-23_03-17-06_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_470aebf989294e159aa19c228ff1d303_proc_3591/training_loss_dynamic_env.png"}]], "vlm_feedback_summary": ["Both training and validation loss plots indicate a successful learning process,\nwith decreasing loss values over epochs. The model appears to be generalizing\nwell, as evidenced by the alignment of training and validation loss trends.", "[]", "The analysis indicates that the integration of augmentation improves both\ntraining dynamics and the diversity of generated scenarios, which is critical\nfor the proposed framework's effectiveness in dynamic environments.", "[]", "Both training and validation loss plots indicate that the model is learning\neffectively, but fluctuations suggest potential instability. Monitoring future\nepochs will be crucial to ensure generalization and prevent overfitting."], "exec_time": [4.184858798980713, 0.04454851150512695, 2.662614583969116, 4.234629154205322, 4.010434865951538], "exec_time_feedback": ["", "", "", "", ""], "datasets_successfully_tested": [["dynamic_env"], [], ["<second_dataset_name>"], [], ["dynamic_env"]], "plot_code": ["import matplotlib.pyplot as plt\nimport numpy as np\nimport os\n\n# Setup working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\n\n# Load experiment data\ntry:\n    experiment_data = np.load(\n        os.path.join(working_dir, \"experiment_data.npy\"), allow_pickle=True\n    ).item()\nexcept Exception as e:\n    print(f\"Error loading experiment data: {e}\")\n\n# Plot training loss\ntry:\n    train_losses = experiment_data[\"hyperparam_tuning_epochs\"][\"dynamic_env\"][\"losses\"][\n        \"train\"\n    ]\n    plt.figure()\n    plt.plot(train_losses, label=\"Training Loss\")\n    plt.title(\"Training Loss Over Epochs\")\n    plt.xlabel(\"Epochs\")\n    plt.ylabel(\"Loss\")\n    plt.legend()\n    plt.savefig(os.path.join(working_dir, \"training_loss_dynamic_env.png\"))\n    plt.close()\nexcept Exception as e:\n    print(f\"Error creating training loss plot: {e}\")\n    plt.close()\n\n# Plot validation loss\ntry:\n    val_losses = experiment_data[\"hyperparam_tuning_epochs\"][\"dynamic_env\"][\"losses\"][\n        \"val\"\n    ]\n    plt.figure()\n    plt.plot(val_losses, label=\"Validation Loss\", color=\"orange\")\n    plt.title(\"Validation Loss Over Epochs\")\n    plt.xlabel(\"Epochs\")\n    plt.ylabel(\"Loss\")\n    plt.legend()\n    plt.savefig(os.path.join(working_dir, \"validation_loss_dynamic_env.png\"))\n    plt.close()\nexcept Exception as e:\n    print(f\"Error creating validation loss plot: {e}\")\n    plt.close()\n", null, "import matplotlib.pyplot as plt\nimport numpy as np\nimport os\n\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\ntry:\n    experiment_data = np.load(\n        os.path.join(working_dir, \"experiment_data.npy\"), allow_pickle=True\n    ).item()\nexcept Exception as e:\n    print(f\"Error loading experiment data: {e}\")\n\nfor dataset_name, results in experiment_data[\"data_augmentation_impact\"].items():\n    try:\n        plt.figure()\n        plt.plot(results[\"losses\"][\"train\"], label=\"Training Loss\")\n        plt.plot(results[\"losses\"][\"val\"], label=\"Validation Loss\")\n        plt.title(f\"{dataset_name} Loss Curves\")\n        plt.xlabel(\"Epochs\")\n        plt.ylabel(\"Loss\")\n        plt.legend()\n        plt.savefig(os.path.join(working_dir, f\"{dataset_name}_loss_curves.png\"))\n        plt.close()\n    except Exception as e:\n        print(f\"Error creating loss curves for {dataset_name}: {e}\")\n        plt.close()\n\n    try:\n        plt.figure()\n        predictions = np.concatenate(results[\"predictions\"])\n        ground_truth = np.concatenate(results[\"ground_truth\"])\n        plt.scatter(\n            ground_truth[:, 0], ground_truth[:, 1], label=\"Ground Truth\", alpha=0.5\n        )\n        plt.scatter(\n            predictions[:, 0], predictions[:, 1], label=\"Generated Samples\", alpha=0.5\n        )\n        plt.title(f\"{dataset_name} - Ground Truth vs Generated Samples\")\n        plt.xlabel(\"Feature 1\")\n        plt.ylabel(\"Feature 2\")\n        plt.legend()\n        plt.savefig(os.path.join(working_dir, f\"{dataset_name}_gt_vs_generated.png\"))\n        plt.close()\n    except Exception as e:\n        print(\n            f\"Error creating ground truth vs generated samples for {dataset_name}: {e}\"\n        )\n        plt.close()\n", null, "import matplotlib.pyplot as plt\nimport numpy as np\nimport os\n\n# Setup working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\n\n# Load experiment data\ntry:\n    experiment_data = np.load(\n        os.path.join(working_dir, \"experiment_data.npy\"), allow_pickle=True\n    ).item()\nexcept Exception as e:\n    print(f\"Error loading experiment data: {e}\")\n\n# Plot training loss\ntry:\n    train_losses = experiment_data[\"hyperparam_tuning_epochs\"][\"dynamic_env\"][\"losses\"][\n        \"train\"\n    ]\n    plt.figure()\n    plt.plot(train_losses, label=\"Training Loss\")\n    plt.title(\"Training Loss Over Epochs\")\n    plt.xlabel(\"Epochs\")\n    plt.ylabel(\"Loss\")\n    plt.legend()\n    plt.savefig(os.path.join(working_dir, \"training_loss_dynamic_env.png\"))\n    plt.close()\nexcept Exception as e:\n    print(f\"Error creating training loss plot: {e}\")\n    plt.close()\n\n# Plot validation loss\ntry:\n    val_losses = experiment_data[\"hyperparam_tuning_epochs\"][\"dynamic_env\"][\"losses\"][\n        \"val\"\n    ]\n    plt.figure()\n    plt.plot(val_losses, label=\"Validation Loss\", color=\"orange\")\n    plt.title(\"Validation Loss Over Epochs\")\n    plt.xlabel(\"Epochs\")\n    plt.ylabel(\"Loss\")\n    plt.legend()\n    plt.savefig(os.path.join(working_dir, \"validation_loss_dynamic_env.png\"))\n    plt.close()\nexcept Exception as e:\n    print(f\"Error creating validation loss plot: {e}\")\n    plt.close()\n"], "plot_plan": ["To visualize the results from the training process, we will load the experiment data, specifically focusing on the training and validation losses over the epochs. We will create two plots: one for the training loss and another for the validation loss. Each figure will be labeled appropriately, and we'll ensure the plots are saved in the specified `working_dir`. To enhance readability, we'll include titles and subtitles to clarify which dataset and what metrics the plots refer to. We'll also handle potential errors while loading the data or creating plots, ensuring figures are closed properly after saving.", null, "To visualize the experiment results stored in `experiment_data.npy`, I will start by loading the numpy file and extracting the relevant data for the various plots, including training and validation losses and any generated samples. Each plot will be created within a try-except block to catch any potential errors. I'll create title and subtitle for each visualization, clearly stating the dataset type (with or without augmentation). For the training and validation curves, I will plot them separately for both datasets. If the generated samples are available, I will limit the plotted epochs to a manageable number of figures to ensure clarity. Finally, each figure will be saved in the `working_dir` with descriptive titles that reflect the content being plotted.", null, null], "ablation_name": [null, "Multi-Dataset Evaluation", "Data Augmentation Impact", null, null], "hyperparam_name": ["epochs", null, null, null, null], "is_seed_node": [false, false, false, false, true], "is_seed_agg_node": [false, false, false, false, false], "parse_metrics_plan": ["To analyze the metrics from the experiment data, I will first load the\n`experiment_data.npy` file located in the working directory. I will then extract\nand print the training and validation losses for the dynamic environment\ndataset, ensuring to specify each metric clearly. Only the final values of each\nmetric will be printed to avoid clutter.", "", "To analyze the metrics from the `experiment_data.npy` file, I'll first load the\nnumpy file and access the metrics for each dataset related to both training and\nvalidation. For each dataset (i.e., with and without augmentation), I will\nextract and print the final values for the training loss and validation loss,\nclearly labeling each metric to enhance understanding.", "", "To analyze the metrics from the experiment data, I will first load the\n`experiment_data.npy` file located in the working directory. I will then extract\nand print the training and validation losses for the dynamic environment\ndataset, ensuring to specify each metric clearly. Only the final values of each\nmetric will be printed to avoid clutter."], "parse_metrics_code": ["import os\nimport numpy as np\n\n# Load experiment data\nexperiment_data = np.load(\n    os.path.join(os.getcwd(), \"working\", \"experiment_data.npy\"), allow_pickle=True\n).item()\n\n# Extract metrics for dynamic environment dataset\ndataset_name = \"dynamic_env\"\nprint(f\"Dataset: {dataset_name}\")\n\n# Extract training and validation losses\ntrain_loss = experiment_data[\"hyperparam_tuning_epochs\"][dataset_name][\"losses\"][\n    \"train\"\n][-1]\nval_loss = experiment_data[\"hyperparam_tuning_epochs\"][dataset_name][\"losses\"][\"val\"][\n    -1\n]\n\nprint(f\"Final training loss: {train_loss:.4f}\")\nprint(f\"Final validation loss: {val_loss:.4f}\")\n", "", "import os\nimport numpy as np\n\n# Load experiment data\nexperiment_data = np.load(\n    os.path.join(os.getcwd(), \"working\", \"experiment_data.npy\"), allow_pickle=True\n).item()\n\n# Extract metrics for analysis\nfor dataset_name, metrics in experiment_data[\"data_augmentation_impact\"].items():\n    # Get losses\n    train_loss = metrics[\"losses\"][\"train\"][-1]  # Final training loss\n    val_loss = metrics[\"losses\"][\"val\"][-1]  # Final validation loss\n\n    # Print metrics\n    print(f\"Dataset: {dataset_name}\")\n    print(f\"Final Training Loss: {train_loss:.4f}\")\n    print(f\"Final Validation Loss: {val_loss:.4f}\")\n", "", "import os\nimport numpy as np\n\n# Load experiment data\nexperiment_data = np.load(\n    os.path.join(os.getcwd(), \"working\", \"experiment_data.npy\"), allow_pickle=True\n).item()\n\n# Extract metrics for dynamic environment dataset\ndataset_name = \"dynamic_env\"\nprint(f\"Dataset: {dataset_name}\")\n\n# Extract training and validation losses\ntrain_loss = experiment_data[\"hyperparam_tuning_epochs\"][dataset_name][\"losses\"][\n    \"train\"\n][-1]\nval_loss = experiment_data[\"hyperparam_tuning_epochs\"][dataset_name][\"losses\"][\"val\"][\n    -1\n]\n\nprint(f\"Final training loss: {train_loss:.4f}\")\nprint(f\"Final validation loss: {val_loss:.4f}\")\n"], "parse_term_out": ["['Dataset: dynamic_env', '\\n', 'Final training loss: 0.0107', '\\n', 'Final\nvalidation loss: 0.0099', '\\n', 'Execution time: a moment seconds (time limit is\n10 minutes).']", "", "['Dataset: Without Augmentation', '\\n', 'Final Training Loss: 0.0372', '\\n',\n'Final Validation Loss: 0.0296', '\\n', 'Dataset: With Augmentation', '\\n',\n'Final Training Loss: 0.0214', '\\n', 'Final Validation Loss: 0.0235', '\\n',\n'Execution time: a moment seconds (time limit is 10 minutes).']", "", "['Dataset: dynamic_env', '\\n', 'Final training loss: 0.0107', '\\n', 'Final\nvalidation loss: 0.0089', '\\n', 'Execution time: a moment seconds (time limit is\n10 minutes).']"], "parse_exc_type": [null, null, null, null, null], "parse_exc_info": [{"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}]}}, null, {"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}]}}, null, {"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}]}}], "parse_exc_stack": [null, null, null, null, null], "completed_stages": ["Stage_1", "Stage_2", "Stage_3", "Stage_4"], "current_stage": "Stage_4"};
+
+// Add log directory path and stage info to the tree data
+treeStructData.log_dir_path = window.location.pathname.split('/').slice(0, -1).join('/');
+treeStructData.current_stage = window.location.pathname.includes('stage_')
+  ? window.location.pathname.split('stage_')[1].split('/')[0]
+  : 'Stage_1';
+
+// Initialize background color
+window.bgColCurrent = bgCol;
+
+// Function to set background color that can be called from the console
+function setBackgroundColor(color) {
+  // Update the global color
+  updateBackgroundColor(color);
+
+  // Refresh the current sketch to apply the new background color
+  if (currentStage) {
+    startSketch(currentStage);
+  }
+}
+
+// Load all stage data and initialize the visualization
+loadAllStageData(treeStructData);
+
+    </script>
+    <title>AI Scientist-v2 Visualization</title>
+    <style>
+      body,
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background-color: #ffffff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      #canvas-container {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 40vw;
+        height: 100vh;
+        background-color: inherit;
+        padding-top: 40px;
+      }
+      canvas {
+        float: left;
+        height: 100vh;
+        width: 100vw;
+      }
+      #text-container {
+        float: right;
+        height: 100vh;
+        width: 50vw;
+        background-color: #282c34;
+        overflow: auto;
+      }
+      #plan {
+        /* border-left: 2px solid #282c34; */
+        background-color: #282c34;
+        color: #f2f0e7;
+        min-height: 5rem;
+        padding: 1em 0 1em 1em;
+      }
+      #plot_plan {
+        background-color: #282c34;
+        color: #f2f0e7;
+        min-height: 5rem;
+        padding: 1em 0 1em 1em;
+        white-space: pre-wrap;
+      }
+      #exec_time_feedback {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #282c34;
+        border-left: 3px solid #ff5555;
+        color: #f2f0e7;
+      }
+      #exec_time {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #282c34;
+        border-left: 3px solid #ff5555;
+        color: #f2f0e7;
+      }
+      #exc_info {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #2c1f1f;
+        border-left: 3px solid #ff5555;
+        color: #f2f0e7;
+      }
+      #metrics {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #282c34;
+        color: #f2f0e7;
+      }
+      #vlm_feedback {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #1f2c2f;
+        color: #f2f0e7;
+        border-left: 3px solid #55ff55;
+      }
+      #vlm_feedback p {
+        margin: 0.5em 0;
+        white-space: pre-wrap;
+      }
+      .datasets_successfully_tested {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #282c34;
+        color: #f2f0e7;
+        border-left: 3px solid #55ff55;
+      }
+      .plots-container {
+        float: right;
+        width: 50vw;
+        padding: 1rem;
+        background-color: #282c34;
+        margin-top: 1rem;
+      }
+
+      .plot-item {
+        flex: 1 1 300px;
+        max-width: 100%;
+        margin-bottom: 1rem;
+        white-space: pre-wrap;
+      }
+
+      .plot-item img {
+        width: 100%;
+        height: auto;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        display: block;
+      }
+
+      .metric-group {
+        margin-bottom: 20px;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+
+      .metric-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+      }
+
+      .metric-table th,
+      .metric-table td {
+        padding: 8px;
+        text-align: left;
+        border: 1px solid #ddd;
+      }
+
+      .metric-table th {
+        background-color: #363b44;
+      }
+
+      /* Styles for tabs */
+      .tabs-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 49vw;
+        background-color: #000000;
+        z-index: 10;
+        display: flex;
+        padding: 0;
+      }
+
+      .tab {
+        cursor: pointer;
+        padding: 10px 15px;
+        background-color: #333;
+        color: #f2f0e7;
+        border: none;
+        outline: none;
+        transition: background-color 0.3s;
+        flex: 1;
+        text-align: center;
+      }
+
+      .tab:hover {
+        background-color: #444;
+      }
+
+      .tab.active {
+        background-color: #4c76af;
+        font-weight: bold;
+      }
+
+      .tab.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        background-color: #282c34;
+      }
+
+      .tab-content {
+        display: none;
+        padding-top: 40px; /* Space for tabs */
+      }
+
+      .tab-content.active {
+        display: block;
+      }
+
+      .stage-info {
+        padding: 10px;
+        background-color: #282c34;
+        color: #f2f0e7;
+        margin-bottom: 10px;
+        font-size: 0.9em;
+      }
+
+      .stage-status {
+        display: inline-block;
+        padding: 3px 6px;
+        border-radius: 3px;
+        margin-left: 8px;
+        font-size: 0.8em;
+      }
+
+      .stage-status.completed {
+        background-color: #4caf50;
+      }
+
+      .stage-status.in-progress {
+        background-color: #2196f3;
+      }
+
+      .stage-status.not-started {
+        background-color: #9e9e9e;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="tabs-container" id="stage-tabs">
+      <button class="tab" data-stage="Stage_1" onclick="selectStage('Stage_1')">Stage 1</button>
+      <button class="tab" data-stage="Stage_2" onclick="selectStage('Stage_2')">Stage 2</button>
+      <button class="tab" data-stage="Stage_3" onclick="selectStage('Stage_3')">Stage 3</button>
+      <button class="tab" data-stage="Stage_4" onclick="selectStage('Stage_4')">Stage 4</button>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <pre id="text-container">
+        <div id="stage-info" class="stage-info"></div>
+        <div id="plan"></div>
+        <hr>
+        <div id="exc_info"></div>
+        <hr>
+        <div id="exec_time"></div>
+        <hr>
+        <div id="exec_time_feedback"></div>
+        <hr>
+        <div id="metrics"></div>
+        <hr>
+        <div id="plot_plan"></div>
+        <hr>
+        <div class="plots-container" id="plots"></div>
+        <hr>
+        <div id="vlm_feedback"></div>
+        <hr>
+        <div id="datasets_successfully_tested"></div>
+        <hr>
+        <code id="code" class="language-python"></code>
+        <hr>
+        <code id="plot_code" class="language-python"></code>
+    </pre>
+  </body>
+</html>

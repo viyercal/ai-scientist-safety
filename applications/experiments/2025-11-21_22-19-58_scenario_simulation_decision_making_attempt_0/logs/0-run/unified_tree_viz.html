@@ -1,0 +1,993 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Check if we're running under Live Server
+      if (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') {
+          let lastModified = '';
+
+          // Check for file changes every second
+          setInterval(async () => {
+              try {
+                  const response = await fetch(window.location.href, { method: 'HEAD' });
+                  // get a timestamp that shows when the file was last changed
+                  const currentModified = response.headers.get('last-modified');
+
+                  if (lastModified && lastModified !== currentModified) {
+                      window.location.reload();
+                  }
+
+                  lastModified = currentModified;
+              } catch (e) {
+                  console.error('Error checking for updates:', e);
+              }
+          }, 1000);
+      }
+  </script>
+    <script
+      id="p5scripttag"
+      src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"
+      integrity="sha512-uaz5GpnQoE6t5echKlX8P52czvsIGgLPcvlzfvRubLZ1Hp8JemUDnbUiAahbVtPb+jUVrNETuXvAhDDF/N3M4w=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
+
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+
+    <script>
+      const bgCol = "#FFFFFF";
+const accentCol = "#1a439e";
+
+hljs.initHighlightingOnLoad();
+
+// Function to update background color globally
+function updateBackgroundColor(color) {
+  // Update the JS variable
+  window.bgColCurrent = color;
+
+  // Update body background
+  document.body.style.backgroundColor = color;
+
+  // Update canvas container background
+  const canvasContainer = document.getElementById('canvas-container');
+  if (canvasContainer) {
+    canvasContainer.style.backgroundColor = color;
+  }
+}
+
+// Store tree data for each stage
+const stageData = {
+  Stage_1: null,
+  Stage_2: null,
+  Stage_3: null,
+  Stage_4: null
+};
+
+// Keep track of current selected stage
+let currentStage = null;
+let currentSketch = null;
+let availableStages = [];
+
+// Class definitions for nodes and edges
+class Node {
+  constructor(x, y, id, isRoot = false) {
+    this.x = x;
+    this.y = y;
+    this.id = id;
+    this.visible = isRoot; // Only root nodes are visible initially
+    this.appearProgress = 0;
+    this.popEffect = 0;
+    this.selected = false;
+    this.isRootNode = isRoot;
+  }
+
+  update() {
+    if (this.visible) {
+      // Handle the main appearance animation
+      if (this.appearProgress < 1) {
+        this.appearProgress += 0.06;
+
+        // When we reach full size, trigger the pop effect
+        if (this.appearProgress >= 1) {
+          this.appearProgress = 1; // Cap at 1
+          this.popEffect = 1; // Start the pop effect
+        }
+      }
+
+      // Handle the pop effect animation
+      if (this.popEffect > 0) {
+        this.popEffect -= 0.15; // Control how quickly it shrinks back
+        if (this.popEffect < 0) this.popEffect = 0; // Don't go negative
+      }
+    }
+  }
+
+  startAnimation() {
+    this.visible = true;
+  }
+
+  color() {
+    if (this.selected) {
+      return accentCol; // Use the global accent color variable for selected node
+    }
+    return '#4263eb'; // Default blue color
+  }
+
+  render(p5) {
+    if (this.visible) {
+      const popBonus = this.popEffect * 0.1;
+      const nodeScale = p5.map(this.appearProgress, 0, 1, 0, 1) + popBonus;
+      const alpha = p5.map(this.appearProgress, 0, 1, 0, 255);
+
+      p5.push();
+      p5.translate(this.x, this.y);
+
+      // Shadow effect
+      p5.noStroke();
+      p5.rectMode(p5.CENTER);
+
+      for (let i = 1; i <= 4; i++) {
+        p5.fill(0, 0, 0, alpha * 0.06);
+        p5.rect(i, i, 30 * nodeScale, 30 * nodeScale, 10);
+      }
+
+      // Main square - use node's color with alpha
+      let nodeColor = p5.color(this.color());
+      nodeColor.setAlpha(alpha);
+      p5.fill(nodeColor);
+      p5.rect(0, 0, 30 * nodeScale, 30 * nodeScale, 10);
+
+      // Draw checkmark icon if the node is selected
+      if (this.selected && this.appearProgress >= 1) {
+        p5.stroke(255);
+        p5.strokeWeight(2 * nodeScale);
+        p5.noFill();
+        // Draw checkmark
+        p5.beginShape();
+        p5.vertex(-8, 0);
+        p5.vertex(-3, 5);
+        p5.vertex(8, -6);
+        p5.endShape();
+      }
+
+      p5.pop();
+    }
+  }
+
+  isMouseOver(p5) {
+    return this.visible &&
+           p5.mouseX > this.x - 15 &&
+           p5.mouseX < this.x + 15 &&
+           p5.mouseY > this.y - 15 &&
+           p5.mouseY < this.y + 15;
+  }
+
+  // Connect this node to a child node
+  child(childNode) {
+    // Create an edge from this node to the child
+    let isLeft = childNode.x < this.x;
+    let isRight = childNode.x > this.x;
+    let edge = new Edge(this, childNode, isLeft, isRight);
+    return edge;
+  }
+}
+
+class Edge {
+  constructor(parent, child, isLeft, isRight) {
+    this.parent = parent;
+    this.child = child;
+    this.isLeft = isLeft;
+    this.isRight = isRight;
+    this.progress = 0;
+
+    // Calculate the midpoint where branching occurs
+    this.midY = parent.y + (child.y - parent.y) * 0.6;
+
+    // Use the actual child x-coordinate
+    // This ensures the edge will connect directly to the child node
+    this.branchX = child.x;
+  }
+
+  update() {
+    if (this.parent.visible && this.progress < 1) {
+      this.progress += 0.01; // Adjust animation speed
+    }
+    if (this.progress >= 1) {
+      this.child.visible = true;
+    }
+  }
+
+  color() {
+    return this.child.color();
+  }
+
+  render(p5) {
+    if (!this.parent.visible) return;
+
+    // Calculate path lengths
+    const verticalDist1 = this.midY - this.parent.y;
+    const horizontalDist = Math.abs(this.branchX - this.parent.x);
+    const verticalDist2 = this.child.y - this.midY;
+    const totalLength = verticalDist1 + horizontalDist + verticalDist2;
+
+    // Calculate how much of each segment to draw
+    const currentLength = totalLength * this.progress;
+
+    p5.stroke(180, 190, 205);
+    p5.strokeWeight(1.5);
+    p5.noFill();
+
+    // Always draw the first vertical segment from parent
+    if (currentLength > 0) {
+      const firstSegmentLength = Math.min(currentLength, verticalDist1);
+      const currentMidY = p5.lerp(this.parent.y, this.midY, firstSegmentLength / verticalDist1);
+      p5.line(this.parent.x, this.parent.y, this.parent.x, currentMidY);
+    }
+
+    if (currentLength > verticalDist1) {
+      // Draw second segment (horizontal)
+      const secondSegmentLength = Math.min(currentLength - verticalDist1, horizontalDist);
+      const currentBranchX = p5.lerp(this.parent.x, this.branchX, secondSegmentLength / horizontalDist);
+      p5.line(this.parent.x, this.midY, currentBranchX, this.midY);
+
+      if (currentLength > verticalDist1 + horizontalDist) {
+        // Draw third segment (vertical to child)
+        const thirdSegmentLength = currentLength - verticalDist1 - horizontalDist;
+        const currentChildY = p5.lerp(this.midY, this.child.y, thirdSegmentLength / verticalDist2);
+        p5.line(this.branchX, this.midY, this.branchX, currentChildY);
+      }
+    }
+  }
+}
+
+// Create a modified sketch for each stage
+function createTreeSketch(stageId) {
+  return function(p5) {
+    let nodes = [];
+    let edges = [];
+    let treeData = stageData[stageId];
+
+    p5.setup = function() {
+      const canvas = p5.createCanvas(p5.windowWidth * 0.4, p5.windowHeight);
+      canvas.parent('canvas-container');
+      p5.smooth();
+      p5.frameRate(60);
+
+      if (treeData) {
+        createTreeFromData(treeData);
+      }
+    };
+
+    p5.windowResized = function() {
+      p5.resizeCanvas(p5.windowWidth * 0.4, p5.windowHeight);
+    };
+
+    function createTreeFromData(data) {
+      // Clear existing nodes and edges
+      nodes = [];
+      edges = [];
+
+      // Add defensive checks to prevent errors
+      if (!data || !data.layout || !Array.isArray(data.layout) || !data.edges || !Array.isArray(data.edges)) {
+        console.error("Invalid tree data format:", data);
+        return; // Exit if data structure is invalid
+      }
+
+      // Find all parent nodes in edges
+      const parentNodes = new Set();
+      for (const [parentId, childId] of data.edges) {
+        parentNodes.add(parentId);
+      }
+
+      // Create nodes
+      for (let i = 0; i < data.layout.length; i++) {
+        const [nx, ny] = data.layout[i];
+        // A node is a root if it's a parent and not a child in any edge
+        const isRoot = parentNodes.has(i) && data.edges.every(edge => edge[1] !== i);
+
+        const node = new Node(
+          nx * p5.width * 0.8 + p5.width * 0.1,
+          ny * p5.height * 0.8 + p5.height * 0.1,
+          i,
+          isRoot
+        );
+        nodes.push(node);
+      }
+
+      // If no root was found, make the first parent node visible
+      if (!nodes.some(node => node.visible) && parentNodes.size > 0) {
+        // Get the first parent node
+        const firstParentId = [...parentNodes][0];
+        if (nodes[firstParentId]) {
+          nodes[firstParentId].visible = true;
+        }
+      }
+
+      // Create edges
+      for (const [parentId, childId] of data.edges) {
+        const parent = nodes[parentId];
+        const child = nodes[childId];
+        if (parent && child) { // Verify both nodes exist
+          const isLeft = child.x < parent.x;
+          const isRight = child.x > parent.x;
+          edges.push(new Edge(parent, child, isLeft, isRight));
+        }
+      }
+
+      // Select the first node by default
+      if (nodes.length > 0) {
+        nodes[0].selected = true;
+        updateNodeInfo(0);
+      }
+    }
+
+    p5.draw = function() {
+      // Use the global background color if available, otherwise use the default bgCol
+      const currentBgColor = window.bgColCurrent || bgCol;
+      p5.background(currentBgColor);
+
+      // Update and render edges
+      for (const edge of edges) {
+        edge.update();
+        edge.render(p5);
+      }
+
+      // Update and render nodes
+      for (const node of nodes) {
+        node.update();
+        node.render(p5);
+      }
+
+      // Handle mouse hover
+      p5.cursor(p5.ARROW);
+      for (const node of nodes) {
+        if (node.isMouseOver(p5)) {
+          p5.cursor(p5.HAND);
+        }
+      }
+    };
+
+    p5.mousePressed = function() {
+      // Check if any node was clicked
+      for (let i = 0; i < nodes.length; i++) {
+        if (nodes[i].visible && nodes[i].isMouseOver(p5)) {
+          // Deselect all nodes
+          nodes.forEach(n => n.selected = false);
+          // Select the clicked node
+          nodes[i].selected = true;
+          // Update the right panel with node info
+          updateNodeInfo(i);
+          break;
+        }
+      }
+    };
+
+    function updateNodeInfo(nodeIndex) {
+      if (treeData) {
+        setNodeInfo(
+          treeData.code[nodeIndex],
+          treeData.plan[nodeIndex],
+          treeData.plot_code?.[nodeIndex],
+          treeData.plot_plan?.[nodeIndex],
+          treeData.metrics?.[nodeIndex],
+          treeData.exc_type?.[nodeIndex] || '',
+          treeData.exc_info?.[nodeIndex]?.args?.[0] || '',
+          treeData.exc_stack?.[nodeIndex] || [],
+          treeData.plots?.[nodeIndex] || [],
+          treeData.plot_analyses?.[nodeIndex] || [],
+          treeData.vlm_feedback_summary?.[nodeIndex] || '',
+          treeData.datasets_successfully_tested?.[nodeIndex] || [],
+          treeData.exec_time_feedback?.[nodeIndex] || '',
+          treeData.exec_time?.[nodeIndex] || ''
+        );
+      }
+    }
+  };
+}
+
+// Start a new p5 sketch for the given stage
+function startSketch(stageId) {
+  if (currentSketch) {
+    currentSketch.remove();
+  }
+
+  if (stageData[stageId]) {
+    currentSketch = new p5(createTreeSketch(stageId));
+
+    // Update stage info
+    const stageNumber = stageId.split('_')[1];
+    let stageDesc = '';
+    switch(stageId) {
+      case 'Stage_1': stageDesc = 'Preliminary Investigation'; break;
+      case 'Stage_2': stageDesc = 'Baseline Tuning'; break;
+      case 'Stage_3': stageDesc = 'Research Agenda Execution'; break;
+      case 'Stage_4': stageDesc = 'Ablation Studies'; break;
+    }
+
+    document.getElementById('stage-info').innerHTML =
+      `<strong>Current Stage: ${stageNumber} - ${stageDesc}</strong>`;
+  }
+}
+
+// Handle tab selection
+function selectStage(stageId) {
+  if (!stageData[stageId] || !availableStages.includes(stageId)) {
+    return; // Don't allow selection of unavailable stages
+  }
+
+  // Update active tab styles
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.classList.remove('active');
+  });
+  document.querySelector(`.tab[data-stage="${stageId}"]`).classList.add('active');
+
+  // Start the new sketch
+  currentStage = stageId;
+  startSketch(stageId);
+}
+
+// Function to load the tree data for all stages
+async function loadAllStageData(baseTreeData) {
+  console.log("Loading stage data with base data:", baseTreeData);
+
+  // The base tree data is for the current stage
+  const currentStageId = baseTreeData.current_stage || 'Stage_1';
+
+  // Ensure base tree data is valid and has required properties
+  if (baseTreeData && baseTreeData.layout && baseTreeData.edges) {
+    stageData[currentStageId] = baseTreeData;
+    availableStages.push(currentStageId);
+    console.log(`Added current stage ${currentStageId} to available stages`);
+  } else {
+    console.warn(`Current stage ${currentStageId} data is invalid:`, baseTreeData);
+  }
+
+  // Use relative path to load other stage trees
+  const logDirPath = baseTreeData.log_dir_path || '.';
+  console.log("Log directory path:", logDirPath);
+
+  // Load data for each stage if available
+  const stageNames = ['Stage_1', 'Stage_2', 'Stage_3', 'Stage_4'];
+  const stageNames2actualNames = {
+    'Stage_1': 'stage_1_initial_implementation_1_preliminary',
+    'Stage_2': 'stage_2_baseline_tuning_1_first_attempt',
+    'Stage_3': 'stage_3_creative_research_1_first_attempt',
+    'Stage_4': 'stage_4_ablation_studies_1_first_attempt'
+    }
+
+  for (const stage of stageNames) {
+
+    if (baseTreeData.completed_stages && baseTreeData.completed_stages.includes(stage)) {
+      try {
+        console.log(`Attempting to load data for ${stage} from ${logDirPath}/${stageNames2actualNames[stage]}/tree_data.json`);
+        const response = await fetch(`${logDirPath}/${stageNames2actualNames[stage]}/tree_data.json`);
+
+        if (response.ok) {
+          const data = await response.json();
+
+          // Validate the loaded data
+          if (data && data.layout && data.edges) {
+            stageData[stage] = data;
+            availableStages.push(stage);
+            console.log(`Successfully loaded and validated data for ${stage}`);
+          } else {
+            console.warn(`Loaded data for ${stage} is invalid:`, data);
+          }
+        } else {
+          console.warn(`Failed to load data for ${stage} - HTTP status ${response.status}`);
+        }
+      } catch (error) {
+        console.error(`Error loading data for ${stage}:`, error);
+      }
+    } else {
+      console.log(`Skipping stage ${stage} - not in completed stages list:`, baseTreeData.completed_stages);
+    }
+  }
+
+  // Update tab visibility based on available stages
+  updateTabVisibility();
+
+  // Start with the first available stage
+  if (availableStages.length > 0) {
+    selectStage(availableStages[0]);
+  } else {
+    console.warn("No stages available to display");
+    // Display a message in the canvas area
+    document.getElementById('canvas-container').innerHTML =
+      '<div style="padding: 20px; color: #333; text-align: center;"><h3>No valid tree data available to display</h3></div>';
+  }
+}
+
+// Update tab visibility based on available stages
+function updateTabVisibility() {
+  const tabs = document.querySelectorAll('.tab');
+  tabs.forEach(tab => {
+    const stageId = tab.getAttribute('data-stage');
+    if (availableStages.includes(stageId)) {
+      tab.classList.remove('disabled');
+    } else {
+      tab.classList.add('disabled');
+    }
+  });
+}
+
+// Utility function to set the node info in the right panel
+const setNodeInfo = (code, plan, plot_code, plot_plan, metrics = null, exc_type = '', exc_info = '',
+    exc_stack = [], plots = [], plot_analyses = [], vlm_feedback_summary = '',
+    datasets_successfully_tested = [], exec_time_feedback = '', exec_time = '') => {
+  const codeElm = document.getElementById("code");
+  if (codeElm) {
+    if (code) {
+      codeElm.innerHTML = hljs.highlight(code, { language: "python" }).value;
+    } else {
+      codeElm.innerHTML = '<p>No code available</p>';
+    }
+  }
+
+  const planElm = document.getElementById("plan");
+  if (planElm) {
+    if (plan) {
+      planElm.innerHTML = hljs.highlight(plan, { language: "plaintext" }).value;
+    } else {
+      planElm.innerHTML = '<p>No plan available</p>';
+    }
+  }
+
+  const plot_codeElm = document.getElementById("plot_code");
+  if (plot_codeElm) {
+    if (plot_code) {
+      plot_codeElm.innerHTML = hljs.highlight(plot_code, { language: "python" }).value;
+    } else {
+      plot_codeElm.innerHTML = '<p>No plot code available</p>';
+    }
+  }
+
+  const plot_planElm = document.getElementById("plot_plan");
+  if (plot_planElm) {
+    if (plot_plan) {
+      plot_planElm.innerHTML = hljs.highlight(plot_plan, { language: "plaintext" }).value;
+    } else {
+      plot_planElm.innerHTML = '<p>No plot plan available</p>';
+    }
+  }
+
+  const metricsElm = document.getElementById("metrics");
+  if (metricsElm) {
+      let metricsContent = `<h3>Metrics:</h3>`;
+      if (metrics && metrics.metric_names) {
+          for (const metric of metrics.metric_names) {
+              metricsContent += `<div class="metric-group">`;
+              metricsContent += `<h4>${metric.metric_name}</h4>`;
+              metricsContent += `<p><strong>Description:</strong> ${metric.description || 'N/A'}</p>`;
+              metricsContent += `<p><strong>Optimization:</strong> ${metric.lower_is_better ? 'Minimize' : 'Maximize'}</p>`;
+
+              // Create table for dataset values
+              metricsContent += `<table class="metric-table">
+                  <tr>
+                      <th>Dataset</th>
+                      <th>Final Value</th>
+                      <th>Best Value</th>
+                  </tr>`;
+
+              for (const dataPoint of metric.data) {
+                  metricsContent += `<tr>
+                      <td>${dataPoint.dataset_name}</td>
+                      <td>${dataPoint.final_value?.toFixed(4) || 'N/A'}</td>
+                      <td>${dataPoint.best_value?.toFixed(4) || 'N/A'}</td>
+                  </tr>`;
+              }
+
+              metricsContent += `</table></div>`;
+          }
+      } else if (metrics === null) {
+          metricsContent += `<p>No metrics available</p>`;
+      }
+      metricsElm.innerHTML = metricsContent;
+  }
+
+  // Add plots display
+  const plotsElm = document.getElementById("plots");
+  if (plotsElm) {
+      if (plots && plots.length > 0) {
+          let plotsContent = '';
+          plots.forEach(plotPath => {
+              plotsContent += `
+                  <div class="plot-item">
+                      <img src="${plotPath}" alt="Experiment Plot" onerror="console.error('Failed to load plot:', this.src)"/>
+                  </div>`;
+          });
+          plotsElm.innerHTML = plotsContent;
+      } else {
+          plotsElm.innerHTML = '';
+      }
+  }
+
+  // Add error info display
+  const errorElm = document.getElementById("exc_info");
+  if (errorElm) {
+    if (exc_type) {
+      let errorContent = `<h3 style="color: #ff5555">Exception Information:</h3>
+                          <p><strong>Type:</strong> ${exc_type}</p>`;
+
+      if (exc_info) {
+        errorContent += `<p><strong>Details:</strong> <pre>${JSON.stringify(exc_info, null, 2)}</pre></p>`;
+      }
+
+      if (exc_stack) {
+        errorContent += `<p><strong>Stack Trace:</strong> <pre>${exc_stack.join('\n')}</pre></p>`;
+      }
+
+      errorElm.innerHTML = errorContent;
+    } else {
+      errorElm.innerHTML = "No exception info available";
+    }
+  }
+
+  const exec_timeElm = document.getElementById("exec_time");
+  if (exec_timeElm) {
+    let exec_timeContent = '<div id="exec_time"><h3>Execution Time (in seconds):</h3><p>' + exec_time + '</p></div>';
+    exec_timeElm.innerHTML = exec_timeContent;
+  }
+
+  const exec_time_feedbackElm = document.getElementById("exec_time_feedback");
+  if (exec_time_feedbackElm) {
+    let exec_time_feedbackContent = '<div id="exec_time_feedback_content">'
+    exec_time_feedbackContent += '<h3>Execution Time Feedback:</h3>'
+    exec_time_feedbackContent += '<p>' + exec_time_feedback + '</p>'
+    exec_time_feedbackContent += '</div>';
+    exec_time_feedbackElm.innerHTML = exec_time_feedbackContent;
+  }
+
+  const vlm_feedbackElm = document.getElementById("vlm_feedback");
+  if (vlm_feedbackElm) {
+      let vlm_feedbackContent = '';
+
+      if (plot_analyses && plot_analyses.length > 0) {
+          vlm_feedbackContent += `<h3>Plot Analysis:</h3>`;
+          plot_analyses.forEach(analysis => {
+              if (analysis && analysis.plot_path) {  // Add null check
+                  vlm_feedbackContent += `
+                      <div class="plot-analysis">
+                          <h4>Analysis for ${analysis.plot_path.split('/').pop()}</h4>
+                          <p>${analysis.analysis || 'No analysis available'}</p>
+                          <ul class="key-findings">
+                              ${(analysis.key_findings || []).map(finding => `<li>${finding}</li>`).join('')}
+                          </ul>
+                      </div>`;
+              } else {
+                  console.warn('Received invalid plot analysis:', analysis);
+                  vlm_feedbackContent += `
+                      <div class="plot-analysis">
+                          <p>Invalid plot analysis data received</p>
+                      </div>`;
+              }
+          });
+      }
+
+      // Add actionable insights if available
+      if (vlm_feedback_summary && typeof vlm_feedback_summary === 'string') {
+          vlm_feedbackContent += `
+              <div class="vlm_feedback">
+                  <h3>VLM Feedback Summary:</h3>
+                  <p>${vlm_feedback_summary}</p>
+              </div>`;
+      }
+
+      console.log("Datasets successfully tested:", datasets_successfully_tested);
+      if (datasets_successfully_tested && datasets_successfully_tested.length > 0) {
+          vlm_feedbackContent += `
+              <div id="datasets_successfully_tested">
+                  <h3>Datasets Successfully Tested:</h3>
+                  <p>${datasets_successfully_tested.join(', ')}</p>
+              </div>`;
+      }
+
+      if (!vlm_feedbackContent) {
+          vlm_feedbackContent = '<p>No insights available for this experiment.</p>';
+      }
+
+      vlm_feedbackElm.innerHTML = vlm_feedbackContent;
+  }
+
+  const datasets_successfully_testedElm = document.getElementById("datasets_successfully_tested");
+  if (datasets_successfully_testedElm) {
+      let datasets_successfully_testedContent = '';
+      if (datasets_successfully_tested && datasets_successfully_tested.length > 0) {
+          datasets_successfully_testedContent = `<h3>Datasets Successfully Tested:</h3><ul>`;
+          datasets_successfully_tested.forEach(dataset => {
+              datasets_successfully_testedContent += `<li>${dataset}</li>`;
+          });
+          datasets_successfully_testedContent += `</ul>`;
+      } else {
+          datasets_successfully_testedContent = '<p>No datasets tested yet</p>';
+      }
+      datasets_successfully_testedElm.innerHTML = datasets_successfully_testedContent;
+  }
+};
+
+// Initialize with the provided tree data
+const treeStructData = {"edges": [[0, 2], [0, 1]], "layout": [[0.5, 0.0], [0.0, 1.0], [1.0, 1.0]], "plan": ["To start the implementation for the proposed research idea of scenario\nsimulation using LLMs in dynamic environments, we will create a synthetic\ndataset representing states and actions. We will employ a simple neural network\nmodel to simulate potential outcomes based on this synthetic data. Our pipeline\nwill include data preparation, model definition, training, simulation of\nscenarios, and evaluation of the prediction accuracy of these scenarios. The\nmetric we will focus on is the Scenario Prediction Accuracy, which assesses how\nwell our simulated outcomes align with ground truth values. Basic loss tracking\nwill also be included, enabling us to monitor model performance during training.\nThe results will be saved in a structured format for later analysis.", "Hyperparam tuning name: learning rate. To implement hyperparameter tuning for\nthe learning rate in the provided training code, I will generate a list of\npotential learning rates to experiment with. The model will be trained for each\nlearning rate, and the resulting training losses and metrics will be saved as\npart of the experiment data. After training, we'll aggregate the results for\ncomparison across the different learning rates used.", "Hyperparam tuning name: batch size. To implement hyperparameter tuning for batch\nsize, I will modify the existing implementation to iterate over a predefined\nlist of batch sizes. For each batch size, the model will be trained for the\nspecified number of epochs, and the training metrics, losses, predictions, and\nground truths will be collected for each configuration. The data will be saved\nin the specified format to facilitate analysis later on."], "code": ["import os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom torch.utils.data import DataLoader, TensorDataset\n\n# Setup working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Device configuration\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n# Synthetic dataset creation\nnp.random.seed(42)\nnum_samples = 1000\nstates = np.random.rand(num_samples, 5)  # 5 features for state\nactions = np.random.rand(num_samples, 2)  # 2 possible actions\noutcomes = (\n    states @ np.array([[0.5], [-0.2], [0.3], [0.1], [0.6]])\n    + actions @ np.array([[1.0], [-1.0]])\n    + np.random.normal(0, 0.1, (num_samples, 1))\n)\n\n# Prepare data loaders\ndataset = TensorDataset(\n    torch.tensor(states, dtype=torch.float32),\n    torch.tensor(actions, dtype=torch.float32),\n    torch.tensor(outcomes, dtype=torch.float32),\n)\ntrain_loader = DataLoader(dataset, batch_size=32, shuffle=True)\n\n\n# Simple Neural Network Model\nclass ScenarioModel(nn.Module):\n    def __init__(self):\n        super(ScenarioModel, self).__init__()\n        self.fc1 = nn.Linear(7, 16)\n        self.fc2 = nn.Linear(16, 1)\n\n    def forward(self, x):\n        x = torch.relu(self.fc1(x))\n        return self.fc2(x)\n\n\nmodel = ScenarioModel().to(device)\ncriterion = nn.MSELoss()\noptimizer = optim.Adam(model.parameters(), lr=0.001)\n\n# Experiment data tracking\nexperiment_data = {\n    \"synthetic_data\": {\n        \"metrics\": {\"train\": [], \"val\": []},\n        \"losses\": {\"train\": [], \"val\": []},\n        \"predictions\": [],\n        \"ground_truth\": [],\n    },\n}\n\n# Training Loop\nfor epoch in range(50):\n    model.train()\n    for batch in train_loader:\n        state, action, outcome = [b.to(device) for b in batch]\n        inputs = torch.cat((state, action), dim=1)\n\n        # Forward pass\n        outputs = model(inputs)\n        loss = criterion(outputs, outcome)\n\n        # Backward and optimize\n        optimizer.zero_grad()\n        loss.backward()\n        optimizer.step()\n\n    # Track loss and accuracy\n    experiment_data[\"synthetic_data\"][\"losses\"][\"train\"].append(loss.item())\n    experiment_data[\"synthetic_data\"][\"ground_truth\"].extend(\n        outcome.detach().cpu().numpy()\n    )\n    experiment_data[\"synthetic_data\"][\"predictions\"].extend(\n        outputs.detach().cpu().numpy()\n    )\n\n    # Print epoch statistics\n    print(f\"Epoch {epoch + 1}: train_loss = {loss.item():.4f}\")\n\n# Compute accuracy (simply comparing means for demonstration, replace with a better metric as per requirements)\npredictions = np.array(experiment_data[\"synthetic_data\"][\"predictions\"])\nground_truth = np.array(experiment_data[\"synthetic_data\"][\"ground_truth\"])\naccuracy = np.mean(np.isclose(predictions, ground_truth, atol=0.1))\n\n# Save experiment data\nnp.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\nprint(f\"Scenario Prediction Accuracy: {accuracy:.4f}\")\n", "import os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom torch.utils.data import DataLoader, TensorDataset\n\n# Setup working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Device configuration\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n# Synthetic dataset creation\nnp.random.seed(42)\nnum_samples = 1000\nstates = np.random.rand(num_samples, 5)  # 5 features for state\nactions = np.random.rand(num_samples, 2)  # 2 possible actions\noutcomes = (\n    states @ np.array([[0.5], [-0.2], [0.3], [0.1], [0.6]])\n    + actions @ np.array([[1.0], [-1.0]])\n    + np.random.normal(0, 0.1, (num_samples, 1))\n)\n\n# Prepare data loaders\ndataset = TensorDataset(\n    torch.tensor(states, dtype=torch.float32),\n    torch.tensor(actions, dtype=torch.float32),\n    torch.tensor(outcomes, dtype=torch.float32),\n)\ntrain_loader = DataLoader(dataset, batch_size=32, shuffle=True)\n\n\n# Simple Neural Network Model\nclass ScenarioModel(nn.Module):\n    def __init__(self):\n        super(ScenarioModel, self).__init__()\n        self.fc1 = nn.Linear(7, 16)\n        self.fc2 = nn.Linear(16, 1)\n\n    def forward(self, x):\n        x = torch.relu(self.fc1(x))\n        return self.fc2(x)\n\n\n# Hyperparameters for tuning\nlearning_rates = [0.001, 0.01, 0.1]\n\n# Experiment data tracking\nexperiment_data = {\"hyperparam_tuning_learning_rate\": {}}\n\n# Training Loop for each learning rate\nfor lr in learning_rates:\n    model = ScenarioModel().to(device)  # create a new model for each learning rate\n    criterion = nn.MSELoss()\n    optimizer = optim.Adam(model.parameters(), lr=lr)\n\n    experiment_data[\"hyperparam_tuning_learning_rate\"][lr] = {\n        \"metrics\": {\"train\": []},\n        \"losses\": {\"train\": []},\n        \"predictions\": [],\n        \"ground_truth\": [],\n    }\n\n    for epoch in range(50):\n        model.train()\n        for batch in train_loader:\n            state, action, outcome = [b.to(device) for b in batch]\n            inputs = torch.cat((state, action), dim=1)\n\n            # Forward pass\n            outputs = model(inputs)\n            loss = criterion(outputs, outcome)\n\n            # Backward and optimize\n            optimizer.zero_grad()\n            loss.backward()\n            optimizer.step()\n\n        # Track loss and accuracy\n        experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"losses\"][\n            \"train\"\n        ].append(loss.item())\n        experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"ground_truth\"].extend(\n            outcome.detach().cpu().numpy()\n        )\n        experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"predictions\"].extend(\n            outputs.detach().cpu().numpy()\n        )\n\n        # Print epoch statistics\n        print(f\"Learning Rate: {lr}, Epoch {epoch + 1}: train_loss = {loss.item():.4f}\")\n\n# Compute accuracy for all learning rates\nfor lr in learning_rates:\n    predictions = np.array(\n        experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"predictions\"]\n    )\n    ground_truth = np.array(\n        experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"ground_truth\"]\n    )\n    accuracy = np.mean(np.isclose(predictions, ground_truth, atol=0.1))\n    experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"metrics\"][\"train\"].append(\n        accuracy\n    )\n    print(f\"Learning Rate: {lr}, Scenario Prediction Accuracy: {accuracy:.4f}\")\n\n# Save experiment data\nnp.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\n", "import os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom torch.utils.data import DataLoader, TensorDataset\n\n# Setup working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Device configuration\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n# Synthetic dataset creation\nnp.random.seed(42)\nnum_samples = 1000\nstates = np.random.rand(num_samples, 5)  # 5 features for state\nactions = np.random.rand(num_samples, 2)  # 2 possible actions\noutcomes = (\n    states @ np.array([[0.5], [-0.2], [0.3], [0.1], [0.6]])\n    + actions @ np.array([[1.0], [-1.0]])\n    + np.random.normal(0, 0.1, (num_samples, 1))\n)\n\n# Prepare data loaders\ndataset = TensorDataset(\n    torch.tensor(states, dtype=torch.float32),\n    torch.tensor(actions, dtype=torch.float32),\n    torch.tensor(outcomes, dtype=torch.float32),\n)\n\n# Define batch sizes to experiment with\nbatch_sizes = [16, 32, 64]\n\n# Experiment data tracking\nexperiment_data = {\"batch_size_tuning\": {}}\n\nfor batch_size in batch_sizes:\n    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)\n\n    # Simple Neural Network Model\n    class ScenarioModel(nn.Module):\n        def __init__(self):\n            super(ScenarioModel, self).__init__()\n            self.fc1 = nn.Linear(7, 16)\n            self.fc2 = nn.Linear(16, 1)\n\n        def forward(self, x):\n            x = torch.relu(self.fc1(x))\n            return self.fc2(x)\n\n    model = ScenarioModel().to(device)\n    criterion = nn.MSELoss()\n    optimizer = optim.Adam(model.parameters(), lr=0.001)\n\n    # Structure for storing results for current batch size\n    experiment_data[\"batch_size_tuning\"][f\"batch_size_{batch_size}\"] = {\n        \"metrics\": {\"train\": []},\n        \"losses\": {\"train\": []},\n        \"predictions\": [],\n        \"ground_truth\": [],\n    }\n\n    # Training Loop\n    for epoch in range(50):\n        model.train()\n        for batch in train_loader:\n            state, action, outcome = [b.to(device) for b in batch]\n            inputs = torch.cat((state, action), dim=1)\n\n            # Forward pass\n            outputs = model(inputs)\n            loss = criterion(outputs, outcome)\n\n            # Backward and optimize\n            optimizer.zero_grad()\n            loss.backward()\n            optimizer.step()\n\n        # Track loss and predictions\n        experiment_data[\"batch_size_tuning\"][f\"batch_size_{batch_size}\"][\"losses\"][\n            \"train\"\n        ].append(loss.item())\n        experiment_data[\"batch_size_tuning\"][f\"batch_size_{batch_size}\"][\n            \"ground_truth\"\n        ].extend(outcome.detach().cpu().numpy())\n        experiment_data[\"batch_size_tuning\"][f\"batch_size_{batch_size}\"][\n            \"predictions\"\n        ].extend(outputs.detach().cpu().numpy())\n\n        # Print epoch statistics\n        print(\n            f\"Batch size {batch_size}, Epoch {epoch + 1}: train_loss = {loss.item():.4f}\"\n        )\n\n# Save experiment data\nnp.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\nprint(\"Experiment data saved.\")\n"], "term_out": ["['Using device: cuda', '\\n', 'Epoch 1: train_loss = 0.2245', '\\n', 'Epoch 2:\ntrain_loss = 0.1323', '\\n', 'Epoch 3: train_loss = 0.1048', '\\n', 'Epoch 4:\ntrain_loss = 0.1690', '\\n', 'Epoch 5: train_loss = 0.0936', '\\n', 'Epoch 6:\ntrain_loss = 0.1039', '\\n', 'Epoch 7: train_loss = 0.0565', '\\n', 'Epoch 8:\ntrain_loss = 0.0206', '\\n', 'Epoch 9: train_loss = 0.0230', '\\n', 'Epoch 10:\ntrain_loss = 0.0385', '\\n', 'Epoch 11: train_loss = 0.0119', '\\n', 'Epoch 12:\ntrain_loss = 0.0045', '\\n', 'Epoch 13: train_loss = 0.0077', '\\n', 'Epoch 14:\ntrain_loss = 0.0060', '\\n', 'Epoch 15: train_loss = 0.0192', '\\n', 'Epoch 16:\ntrain_loss = 0.0069', '\\n', 'Epoch 17: train_loss = 0.0106', '\\n', 'Epoch 18:\ntrain_loss = 0.0215', '\\n', 'Epoch 19: train_loss = 0.0059', '\\n', 'Epoch 20:\ntrain_loss = 0.0099', '\\n', 'Epoch 21: train_loss = 0.0028', '\\n', 'Epoch 22:\ntrain_loss = 0.0159', '\\n', 'Epoch 23: train_loss = 0.0151', '\\n', 'Epoch 24:\ntrain_loss = 0.0062', '\\n', 'Epoch 25: train_loss = 0.0149', '\\n', 'Epoch 26:\ntrain_loss = 0.0127', '\\n', 'Epoch 27: train_loss = 0.0067', '\\n', 'Epoch 28:\ntrain_loss = 0.0165', '\\n', 'Epoch 29: train_loss = 0.0069', '\\n', 'Epoch 30:\ntrain_loss = 0.0080', '\\n', 'Epoch 31: train_loss = 0.0024', '\\n', 'Epoch 32:\ntrain_loss = 0.0118', '\\n', 'Epoch 33: train_loss = 0.0076', '\\n', 'Epoch 34:\ntrain_loss = 0.0020', '\\n', 'Epoch 35: train_loss = 0.0090', '\\n', 'Epoch 36:\ntrain_loss = 0.0129', '\\n', 'Epoch 37: train_loss = 0.0078', '\\n', 'Epoch 38:\ntrain_loss = 0.0210', '\\n', 'Epoch 39: train_loss = 0.0100', '\\n', 'Epoch 40:\ntrain_loss = 0.0084', '\\n', 'Epoch 41: train_loss = 0.0105', '\\n', 'Epoch 42:\ntrain_loss = 0.0095', '\\n', 'Epoch 43: train_loss = 0.0060', '\\n', 'Epoch 44:\ntrain_loss = 0.0032', '\\n', 'Epoch 45: train_loss = 0.0093', '\\n', 'Epoch 46:\ntrain_loss = 0.0086', '\\n', 'Epoch 47: train_loss = 0.0118', '\\n', 'Epoch 48:\ntrain_loss = 0.0075', '\\n', 'Epoch 49: train_loss = 0.0016', '\\n', 'Epoch 50:\ntrain_loss = 0.0100', '\\n', 'Scenario Prediction Accuracy: 0.5950', '\\n',\n'Execution time: 5 seconds seconds (time limit is 10 minutes).']", "['Using device: cuda', '\\n', 'Learning Rate: 0.001, Epoch 1: train_loss =\n0.2245', '\\n', 'Learning Rate: 0.001, Epoch 2: train_loss = 0.1323', '\\n',\n'Learning Rate: 0.001, Epoch 3: train_loss = 0.1048', '\\n', 'Learning Rate:\n0.001, Epoch 4: train_loss = 0.1690', '\\n', 'Learning Rate: 0.001, Epoch 5:\ntrain_loss = 0.0936', '\\n', 'Learning Rate: 0.001, Epoch 6: train_loss =\n0.1039', '\\n', 'Learning Rate: 0.001, Epoch 7: train_loss = 0.0565', '\\n',\n'Learning Rate: 0.001, Epoch 8: train_loss = 0.0206', '\\n', 'Learning Rate:\n0.001, Epoch 9: train_loss = 0.0230', '\\n', 'Learning Rate: 0.001, Epoch 10:\ntrain_loss = 0.0385', '\\n', 'Learning Rate: 0.001, Epoch 11: train_loss =\n0.0119', '\\n', 'Learning Rate: 0.001, Epoch 12: train_loss = 0.0045', '\\n',\n'Learning Rate: 0.001, Epoch 13: train_loss = 0.0077', '\\n', 'Learning Rate:\n0.001, Epoch 14: train_loss = 0.0060', '\\n', 'Learning Rate: 0.001, Epoch 15:\ntrain_loss = 0.0192', '\\n', 'Learning Rate: 0.001, Epoch 16: train_loss =\n0.0069', '\\n', 'Learning Rate: 0.001, Epoch 17: train_loss = 0.0106', '\\n',\n'Learning Rate: 0.001, Epoch 18: train_loss = 0.0215', '\\n', 'Learning Rate:\n0.001, Epoch 19: train_loss = 0.0059', '\\n', 'Learning Rate: 0.001, Epoch 20:\ntrain_loss = 0.0099', '\\n', 'Learning Rate: 0.001, Epoch 21: train_loss =\n0.0028', '\\n', 'Learning Rate: 0.001, Epoch 22: train_loss = 0.0159', '\\n',\n'Learning Rate: 0.001, Epoch 23: train_loss = 0.0151', '\\n', 'Learning Rate:\n0.001, Epoch 24: train_loss = 0.0062', '\\n', 'Learning Rate: 0.001, Epoch 25:\ntrain_loss = 0.0149', '\\n', 'Learning Rate: 0.001, Epoch 26: train_loss =\n0.0127', '\\n', 'Learning Rate: 0.001, Epoch 27: train_loss = 0.0067', '\\n',\n'Learning Rate: 0.001, Epoch 28: train_loss = 0.0165', '\\n', 'Learning Rate:\n0.001, Epoch 29: train_loss = 0.0069', '\\n', 'Learning Rate: 0.001, Epoch 30:\ntrain_loss = 0.0080', '\\n', 'Learning Rate: 0.001, Epoch 31: train_loss =\n0.0024', '\\n', 'Learning Rate: 0.001, Epoch 32: train_loss = 0.0118', '\\n',\n'Learning Rate: 0.001, Epoch 33: train_loss = 0.0076', '\\n', 'Learning Rate:\n0.001, Epoch 34: train_loss = 0.0020', '\\n', 'Learning Rate: 0.001, Epoch 35:\ntrain_loss = 0.0090', '\\n', 'Learning Rate: 0.001, Epoch 36: train_loss =\n0.0129', '\\n', 'Learning Rate: 0.001, Epoch 37: train_loss = 0.0078', '\\n',\n'Learning Rate: 0.001, Epoch 38: train_loss = 0.0210', '\\n', 'Learning Rate:\n0.001, Epoch 39: train_loss = 0.0100', '\\n', 'Learning Rate: 0.001, Epoch 40:\ntrain_loss = 0.0084', '\\n', 'Learning Rate: 0.001, Epoch 41: train_loss =\n0.0105', '\\n', 'Learning Rate: 0.001, Epoch 42: train_loss = 0.0095', '\\n',\n'Learning Rate: 0.001, Epoch 43: train_loss = 0.0060', '\\n', 'Learning Rate:\n0.001, Epoch 44: train_loss = 0.0032', '\\n', 'Learning Rate: 0.001, Epoch 45:\ntrain_loss = 0.0093', '\\n', 'Learning Rate: 0.001, Epoch 46: train_loss =\n0.0086', '\\n', 'Learning Rate: 0.001, Epoch 47: train_loss = 0.0118', '\\n',\n'Learning Rate: 0.001, Epoch 48: train_loss = 0.0075', '\\n', 'Learning Rate:\n0.001, Epoch 49: train_loss = 0.0016', '\\n', 'Learning Rate: 0.001, Epoch 50:\ntrain_loss = 0.0100', '\\n', 'Learning Rate: 0.01, Epoch 1: train_loss = 0.0879',\n'\\n', 'Learning Rate: 0.01, Epoch 2: train_loss = 0.0175', '\\n', 'Learning Rate:\n0.01, Epoch 3: train_loss = 0.0135', '\\n', 'Learning Rate: 0.01, Epoch 4:\ntrain_loss = 0.0082', '\\n', 'Learning Rate: 0.01, Epoch 5: train_loss = 0.0187',\n'\\n', 'Learning Rate: 0.01, Epoch 6: train_loss = 0.0067', '\\n', 'Learning Rate:\n0.01, Epoch 7: train_loss = 0.0083', '\\n', 'Learning Rate: 0.01, Epoch 8:\ntrain_loss = 0.0194', '\\n', 'Learning Rate: 0.01, Epoch 9: train_loss = 0.0172',\n'\\n', 'Learning Rate: 0.01, Epoch 10: train_loss = 0.0332', '\\n', 'Learning\nRate: 0.01, Epoch 11: train_loss = 0.0180', '\\n', 'Learning Rate: 0.01, Epoch\n12: train_loss = 0.0066', '\\n', 'Learning Rate: 0.01, Epoch 13: train_loss =\n0.0133', '\\n', 'Learning Rate: 0.01, Epoch 14: train_loss = 0.0060', '\\n',\n'Learning Rate: 0.01, Epoch 15: train_loss = 0.0046', '\\n', 'Learning Rate:\n0.01, Epoch 16: train_loss = 0.0120', '\\n', 'Learning Rate: 0.01, Epoch 17:\ntrain_loss = 0.0072', '\\n', 'Learning Rate: 0.01, Epoch 18: train_loss =\n0.0025', '\\n', 'Learning Rate: 0.01, Epoch 19: train_loss = 0.0128', '\\n',\n'Learning Rate: 0.01, Epoch 20: train_loss = 0.0130', '\\n', 'Learning Rate:\n0.01, Epoch 21: train_loss = 0.0043', '\\n', 'Learning Rate: 0.01, Epoch 22:\ntrain_loss = 0.0088', '\\n', 'Learning Rate: 0.01, Epoch 23: train_loss =\n0.0235', '\\n', 'Learning Rate: 0.01, Epoch 24: train_loss = 0.0248', '\\n',\n'Learning Rate: 0.01, Epoch 25: train_loss = 0.0143', '\\n', 'Learning Rate:\n0.01, Epoch 26: train_loss = 0.0036', '\\n', 'Learning Rate: 0.01, Epoch 27:\ntrain_loss = 0.0073', '\\n', 'Learning Rate: 0.01, Epoch 28: train_loss =\n0.0033', '\\n', 'Learning Rate: 0.01, Epoch 29: train_loss = 0.0087', '\\n',\n'Learning Rate: 0.01, Epoch 30: train_loss = 0.0261', '\\n', 'Learning Rate:\n0.01, Epoch 31: train_loss = 0.0135', '\\n', 'Learning Rate: 0.01, Epoch 32:\ntrain_loss = 0.0122', '\\n', 'Learning Rate: 0.01, Epoch 33: train_loss =\n0.0175', '\\n', 'Learning Rate: 0.01, Epoch 34: train_loss = 0.0134', '\\n',\n'Learning Rate: 0.01, Epoch 35: train_loss = 0.0084', '\\n', 'Learning Rate:\n0.01, Epoch 36: train_loss = 0.0096', '\\n', 'Learning Rate: 0.01, Epoch 37:\ntrain_loss = 0.0171', '\\n', 'Learning Rate: 0.01, Epoch 38: train_loss =\n0.0051', '\\n', 'Learning Rate: 0.01, Epoch 39: train_loss = 0.0250', '\\n',\n'Learning Rate: 0.01, Epoch 40: train_loss = 0.0129', '\\n', 'Learning Rate:\n0.01, Epoch 41: train_loss = 0.0075', '\\n', 'Learning Rate: 0.01, Epoch 42:\ntrain_loss = 0.0154', '\\n', 'Learning Rate: 0.01, Epoch 43: train_loss =\n0.0178', '\\n', 'Learning Rate: 0.01, Epoch 44: train_loss = 0.0273', '\\n',\n'Learning Rate: 0.01, Epoch 45: train_loss = 0.0093', '\\n', 'Learning Rate:\n0.01, Epoch 46: train_loss = 0.0068', '\\n', 'Learning Rate: 0.01, Epoch 47:\ntrain_loss = 0.0067', '\\n', 'Learning Rate: 0.01, Epoch 48: train_loss =\n0.0105', '\\n', 'Learning Rate: 0.01, Epoch 49: train_loss = 0.0159', '\\n',\n'Learning Rate: 0.01, Epoch 50: train_loss = 0.0141', '\\n', 'Learning Rate: 0.1,\nEpoch 1: train_loss = 0.0177', '\\n', 'Learning Rate: 0.1, Epoch 2: train_loss =\n0.0237', '\\n', 'Learning Rate: 0.1, Epoch 3: train_loss = 0.0136', '\\n',\n'Learning Rate: 0.1, Epoch 4: train_loss = 0.0272', '\\n', 'Learning Rate: 0.1,\nEpoch 5: train_loss = 0.0253', '\\n', 'Learning Rate: 0.1, Epoch 6: train_loss =\n0.0078', '\\n', 'Learning Rate: 0.1, Epoch 7: train_loss = 0.0089', '\\n',\n'Learning Rate: 0.1, Epoch 8: train_loss = 0.0263', '\\n', 'Learning Rate: 0.1,\nEpoch 9: train_loss = 0.0156', '\\n', 'Learning Rate: 0.1, Epoch 10: train_loss =\n0.0074', '\\n', 'Learning Rate: 0.1, Epoch 11: train_loss = 0.0032', '\\n',\n'Learning Rate: 0.1, Epoch 12: train_loss = 0.0106', '\\n', 'Learning Rate: 0.1,\nEpoch 13: train_loss = 0.0112', '\\n', 'Learning Rate: 0.1, Epoch 14: train_loss\n= 0.0185', '\\n', 'Learning Rate: 0.1, Epoch 15: train_loss = 0.0097', '\\n',\n'Learning Rate: 0.1, Epoch 16: train_loss = 0.0105', '\\n', 'Learning Rate: 0.1,\nEpoch 17: train_loss = 0.0284', '\\n', 'Learning Rate: 0.1, Epoch 18: train_loss\n= 0.0349', '\\n', 'Learning Rate: 0.1, Epoch 19: train_loss = 0.0129', '\\n',\n'Learning Rate: 0.1, Epoch 20: train_loss = 0.0155', '\\n', 'Learning Rate: 0.1,\nEpoch 21: train_loss = 0.0059', '\\n', 'Learning Rate: 0.1, Epoch 22: train_loss\n= 0.0093', '\\n', 'Learning Rate: 0.1, Epoch 23: train_loss = 0.0285', '\\n',\n'Learning Rate: 0.1, Epoch 24: train_loss = 0.0156', '\\n', 'Learning Rate: 0.1,\nEpoch 25: train_loss = 0.0085', '\\n', 'Learning Rate: 0.1, Epoch 26: train_loss\n= 0.0056', '\\n', 'Learning Rate: 0.1, Epoch 27: train_loss = 0.0097', '\\n',\n'Learning Rate: 0.1, Epoch 28: train_loss = 0.0056', '\\n', 'Learning Rate: 0.1,\nEpoch 29: train_loss = 0.0130', '\\n', 'Learning Rate: 0.1, Epoch 30: train_loss\n= 0.0091', '\\n', 'Learning Rate: 0.1, Epoch 31: train_loss = 0.0142', '\\n',\n'Learning Rate: 0.1, Epoch 32: train_loss = 0.0239', '\\n', 'Learning Rate: 0.1,\nEpoch 33: train_loss = 0.0103', '\\n', 'Learning Rate: 0.1, Epoch 34: train_loss\n= 0.0059', '\\n', 'Learning Rate: 0.1, Epoch 35: train_loss = 0.0126', '\\n',\n'Learning Rate: 0.1, Epoch 36: train_loss = 0.0107', '\\n', 'Learning Rate: 0.1,\nEpoch 37: train_loss = 0.0144', '\\n', 'Learning Rate: 0.1, Epoch 38: train_loss\n= 0.0188', '\\n', 'Learning Rate: 0.1, Epoch 39: train_loss = 0.0133', '\\n',\n'Learning Rate: 0.1, Epoch 40: train_loss = 0.0212', '\\n', 'Learning Rate: 0.1,\nEpoch 41: train_loss = 0.0115', '\\n', 'Learning Rate: 0.1, Epoch 42: train_loss\n= 0.0089', '\\n', 'Learning Rate: 0.1, Epoch 43: train_loss = 0.0054', '\\n',\n'Learning Rate: 0.1, Epoch 44: train_loss = 0.0143', '\\n', 'Learning Rate: 0.1,\nEpoch 45: train_loss = 0.0107', '\\n', 'Learning Rate: 0.1, Epoch 46: train_loss\n= 0.0080', '\\n', 'Learning Rate: 0.1, Epoch 47: train_loss = 0.0034', '\\n',\n'Learning Rate: 0.1, Epoch 48: train_loss = 0.0119', '\\n', 'Learning Rate: 0.1,\nEpoch 49: train_loss = 0.0121', '\\n', 'Learning Rate: 0.1, Epoch 50: train_loss\n= 0.0215', '\\n', 'Learning Rate: 0.001, Scenario Prediction Accuracy: 0.5950',\n'\\n', 'Learning Rate: 0.01, Scenario Prediction Accuracy: 0.6050', '\\n',\n'Learning Rate: 0.1, Scenario Prediction Accuracy: 0.6025', '\\n', 'Execution\ntime: 9 seconds seconds (time limit is 10 minutes).']", "['Using device: cuda', '\\n', 'Batch size 16, Epoch 1: train_loss = 0.1910',\n'\\n', 'Batch size 16, Epoch 2: train_loss = 0.1096', '\\n', 'Batch size 16, Epoch\n3: train_loss = 0.0750', '\\n', 'Batch size 16, Epoch 4: train_loss = 0.1013',\n'\\n', 'Batch size 16, Epoch 5: train_loss = 0.0472', '\\n', 'Batch size 16, Epoch\n6: train_loss = 0.0310', '\\n', 'Batch size 16, Epoch 7: train_loss = 0.0055',\n'\\n', 'Batch size 16, Epoch 8: train_loss = 0.0080', '\\n', 'Batch size 16, Epoch\n9: train_loss = 0.0111', '\\n', 'Batch size 16, Epoch 10: train_loss = 0.0075',\n'\\n', 'Batch size 16, Epoch 11: train_loss = 0.0029', '\\n', 'Batch size 16,\nEpoch 12: train_loss = 0.0026', '\\n', 'Batch size 16, Epoch 13: train_loss =\n0.0067', '\\n', 'Batch size 16, Epoch 14: train_loss = 0.0041', '\\n', 'Batch size\n16, Epoch 15: train_loss = 0.0165', '\\n', 'Batch size 16, Epoch 16: train_loss =\n0.0060', '\\n', 'Batch size 16, Epoch 17: train_loss = 0.0099', '\\n', 'Batch size\n16, Epoch 18: train_loss = 0.0188', '\\n', 'Batch size 16, Epoch 19: train_loss =\n0.0049', '\\n', 'Batch size 16, Epoch 20: train_loss = 0.0104', '\\n', 'Batch size\n16, Epoch 21: train_loss = 0.0021', '\\n', 'Batch size 16, Epoch 22: train_loss =\n0.0142', '\\n', 'Batch size 16, Epoch 23: train_loss = 0.0149', '\\n', 'Batch size\n16, Epoch 24: train_loss = 0.0059', '\\n', 'Batch size 16, Epoch 25: train_loss =\n0.0142', '\\n', 'Batch size 16, Epoch 26: train_loss = 0.0139', '\\n', 'Batch size\n16, Epoch 27: train_loss = 0.0069', '\\n', 'Batch size 16, Epoch 28: train_loss =\n0.0178', '\\n', 'Batch size 16, Epoch 29: train_loss = 0.0085', '\\n', 'Batch size\n16, Epoch 30: train_loss = 0.0080', '\\n', 'Batch size 16, Epoch 31: train_loss =\n0.0024', '\\n', 'Batch size 16, Epoch 32: train_loss = 0.0118', '\\n', 'Batch size\n16, Epoch 33: train_loss = 0.0092', '\\n', 'Batch size 16, Epoch 34: train_loss =\n0.0020', '\\n', 'Batch size 16, Epoch 35: train_loss = 0.0091', '\\n', 'Batch size\n16, Epoch 36: train_loss = 0.0163', '\\n', 'Batch size 16, Epoch 37: train_loss =\n0.0080', '\\n', 'Batch size 16, Epoch 38: train_loss = 0.0203', '\\n', 'Batch size\n16, Epoch 39: train_loss = 0.0082', '\\n', 'Batch size 16, Epoch 40: train_loss =\n0.0088', '\\n', 'Batch size 16, Epoch 41: train_loss = 0.0102', '\\n', 'Batch size\n16, Epoch 42: train_loss = 0.0096', '\\n', 'Batch size 16, Epoch 43: train_loss =\n0.0048', '\\n', 'Batch size 16, Epoch 44: train_loss = 0.0031', '\\n', 'Batch size\n16, Epoch 45: train_loss = 0.0084', '\\n', 'Batch size 16, Epoch 46: train_loss =\n0.0110', '\\n', 'Batch size 16, Epoch 47: train_loss = 0.0122', '\\n', 'Batch size\n16, Epoch 48: train_loss = 0.0073', '\\n', 'Batch size 16, Epoch 49: train_loss =\n0.0010', '\\n', 'Batch size 16, Epoch 50: train_loss = 0.0093', '\\n', 'Batch size\n32, Epoch 1: train_loss = 0.5375', '\\n', 'Batch size 32, Epoch 2: train_loss =\n0.2933', '\\n', 'Batch size 32, Epoch 3: train_loss = 0.2002', '\\n', 'Batch size\n32, Epoch 4: train_loss = 0.1161', '\\n', 'Batch size 32, Epoch 5: train_loss =\n0.1901', '\\n', 'Batch size 32, Epoch 6: train_loss = 0.0353', '\\n', 'Batch size\n32, Epoch 7: train_loss = 0.0319', '\\n', 'Batch size 32, Epoch 8: train_loss =\n0.0101', '\\n', 'Batch size 32, Epoch 9: train_loss = 0.0212', '\\n', 'Batch size\n32, Epoch 10: train_loss = 0.0194', '\\n', 'Batch size 32, Epoch 11: train_loss =\n0.0154', '\\n', 'Batch size 32, Epoch 12: train_loss = 0.0080', '\\n', 'Batch size\n32, Epoch 13: train_loss = 0.0121', '\\n', 'Batch size 32, Epoch 14: train_loss =\n0.0083', '\\n', 'Batch size 32, Epoch 15: train_loss = 0.0033', '\\n', 'Batch size\n32, Epoch 16: train_loss = 0.0075', '\\n', 'Batch size 32, Epoch 17: train_loss =\n0.0087', '\\n', 'Batch size 32, Epoch 18: train_loss = 0.0021', '\\n', 'Batch size\n32, Epoch 19: train_loss = 0.0069', '\\n', 'Batch size 32, Epoch 20: train_loss =\n0.0106', '\\n', 'Batch size 32, Epoch 21: train_loss = 0.0044', '\\n', 'Batch size\n32, Epoch 22: train_loss = 0.0073', '\\n', 'Batch size 32, Epoch 23: train_loss =\n0.0188', '\\n', 'Batch size 32, Epoch 24: train_loss = 0.0121', '\\n', 'Batch size\n32, Epoch 25: train_loss = 0.0132', '\\n', 'Batch size 32, Epoch 26: train_loss =\n0.0053', '\\n', 'Batch size 32, Epoch 27: train_loss = 0.0073', '\\n', 'Batch size\n32, Epoch 28: train_loss = 0.0054', '\\n', 'Batch size 32, Epoch 29: train_loss =\n0.0088', '\\n', 'Batch size 32, Epoch 30: train_loss = 0.0283', '\\n', 'Batch size\n32, Epoch 31: train_loss = 0.0124', '\\n', 'Batch size 32, Epoch 32: train_loss =\n0.0155', '\\n', 'Batch size 32, Epoch 33: train_loss = 0.0130', '\\n', 'Batch size\n32, Epoch 34: train_loss = 0.0061', '\\n', 'Batch size 32, Epoch 35: train_loss =\n0.0075', '\\n', 'Batch size 32, Epoch 36: train_loss = 0.0078', '\\n', 'Batch size\n32, Epoch 37: train_loss = 0.0218', '\\n', 'Batch size 32, Epoch 38: train_loss =\n0.0036', '\\n', 'Batch size 32, Epoch 39: train_loss = 0.0201', '\\n', 'Batch size\n32, Epoch 40: train_loss = 0.0164', '\\n', 'Batch size 32, Epoch 41: train_loss =\n0.0075', '\\n', 'Batch size 32, Epoch 42: train_loss = 0.0224', '\\n', 'Batch size\n32, Epoch 43: train_loss = 0.0171', '\\n', 'Batch size 32, Epoch 44: train_loss =\n0.0254', '\\n', 'Batch size 32, Epoch 45: train_loss = 0.0083', '\\n', 'Batch size\n32, Epoch 46: train_loss = 0.0052', '\\n', 'Batch size 32, Epoch 47: train_loss =\n0.0083', '\\n', 'Batch size 32, Epoch 48: train_loss = 0.0096', '\\n', 'Batch size\n32, Epoch 49: train_loss = 0.0121', '\\n', 'Batch size 32, Epoch 50: train_loss =\n0.0138', '\\n', 'Batch size 64, Epoch 1: train_loss = 0.7576', '\\n', 'Batch size\n64, Epoch 2: train_loss = 0.5604', '\\n', 'Batch size 64, Epoch 3: train_loss =\n0.4584', '\\n', 'Batch size 64, Epoch 4: train_loss = 0.3872', '\\n', 'Batch size\n64, Epoch 5: train_loss = 0.3228', '\\n', 'Batch size 64, Epoch 6: train_loss =\n0.2708', '\\n', 'Batch size 64, Epoch 7: train_loss = 0.3109', '\\n', 'Batch size\n64, Epoch 8: train_loss = 0.2421', '\\n', 'Batch size 64, Epoch 9: train_loss =\n0.2291', '\\n', 'Batch size 64, Epoch 10: train_loss = 0.2178', '\\n', 'Batch size\n64, Epoch 11: train_loss = 0.2655', '\\n', 'Batch size 64, Epoch 12: train_loss =\n0.1354', '\\n', 'Batch size 64, Epoch 13: train_loss = 0.1874', '\\n', 'Batch size\n64, Epoch 14: train_loss = 0.1952', '\\n', 'Batch size 64, Epoch 15: train_loss =\n0.1492', '\\n', 'Batch size 64, Epoch 16: train_loss = 0.1258', '\\n', 'Batch size\n64, Epoch 17: train_loss = 0.1342', '\\n', 'Batch size 64, Epoch 18: train_loss =\n0.1292', '\\n', 'Batch size 64, Epoch 19: train_loss = 0.0866', '\\n', 'Batch size\n64, Epoch 20: train_loss = 0.0860', '\\n', 'Batch size 64, Epoch 21: train_loss =\n0.0599', '\\n', 'Batch size 64, Epoch 22: train_loss = 0.0463', '\\n', 'Batch size\n64, Epoch 23: train_loss = 0.0232', '\\n', 'Batch size 64, Epoch 24: train_loss =\n0.0326', '\\n', 'Batch size 64, Epoch 25: train_loss = 0.0165', '\\n', 'Batch size\n64, Epoch 26: train_loss = 0.0165', '\\n', 'Batch size 64, Epoch 27: train_loss =\n0.0148', '\\n', 'Batch size 64, Epoch 28: train_loss = 0.0064', '\\n', 'Batch size\n64, Epoch 29: train_loss = 0.0147', '\\n', 'Batch size 64, Epoch 30: train_loss =\n0.0133', '\\n', 'Batch size 64, Epoch 31: train_loss = 0.0142', '\\n', 'Batch size\n64, Epoch 32: train_loss = 0.0177', '\\n', 'Batch size 64, Epoch 33: train_loss =\n0.0119', '\\n', 'Batch size 64, Epoch 34: train_loss = 0.0136', '\\n', 'Batch size\n64, Epoch 35: train_loss = 0.0104', '\\n', 'Batch size 64, Epoch 36: train_loss =\n0.0112', '\\n', 'Batch size 64, Epoch 37: train_loss = 0.0117', '\\n', 'Batch size\n64, Epoch 38: train_loss = 0.0093', '\\n', 'Batch size 64, Epoch 39: train_loss =\n0.0158', '\\n', 'Batch size 64, Epoch 40: train_loss = 0.0096', '\\n', 'Batch size\n64, Epoch 41: train_loss = 0.0101', '\\n', 'Batch size 64, Epoch 42: train_loss =\n0.0142', '\\n', 'Batch size 64, Epoch 43: train_loss = 0.0080', '\\n', 'Batch size\n64, Epoch 44: train_loss = 0.0131', '\\n', 'Batch size 64, Epoch 45: train_loss =\n0.0116', '\\n', 'Batch size 64, Epoch 46: train_loss = 0.0082', '\\n', 'Batch size\n64, Epoch 47: train_loss = 0.0075', '\\n', 'Batch size 64, Epoch 48: train_loss =\n0.0106', '\\n', 'Batch size 64, Epoch 49: train_loss = 0.0086', '\\n', 'Batch size\n64, Epoch 50: train_loss = 0.0154', '\\n', 'Experiment data saved.', '\\n',\n'Execution time: 10 seconds seconds (time limit is 10 minutes).']"], "analysis": ["", "", "The model architecture in the code is incorrect. The input dimension of the\nfirst layer in the `ScenarioModel` class should match the concatenated input\nsize of state and action features. Since states have 5 features and actions have\n2 features, the correct input size should be 7, not 5. This mismatch will cause\nruntime errors when the model is trained. To fix this, change the input\ndimension of the first linear layer from 5 to 7."], "exc_type": [null, null, null], "exc_info": [null, null, null], "exc_stack": [null, null, null], "exp_name": "0-run", "metrics": [{"metric_names": [{"metric_name": "train loss", "lower_is_better": true, "description": "The loss value during training", "data": [{"dataset_name": "synthetic_data", "final_value": 0.01, "best_value": 0.01}]}, {"metric_name": "train accuracy", "lower_is_better": false, "description": "The accuracy value during training", "data": [{"dataset_name": "synthetic_data", "final_value": 0.595, "best_value": 0.595}]}]}, {"metric_names": [{"metric_name": "train accuracy", "lower_is_better": false, "description": "The accuracy of the model on the training dataset.", "data": [{"dataset_name": "Learning Rate 0.001", "final_value": 0.595, "best_value": 0.595}, {"dataset_name": "Learning Rate 0.01", "final_value": 0.605, "best_value": 0.605}, {"dataset_name": "Learning Rate 0.1", "final_value": 0.6025, "best_value": 0.6025}]}, {"metric_name": "train loss", "lower_is_better": true, "description": "The loss of the model on the training dataset.", "data": [{"dataset_name": "Learning Rate 0.001", "final_value": 0.01, "best_value": 0.01}, {"dataset_name": "Learning Rate 0.01", "final_value": 0.0141, "best_value": 0.0141}, {"dataset_name": "Learning Rate 0.1", "final_value": 0.0215, "best_value": 0.0215}]}]}, {"metric_names": [{"metric_name": "train loss", "lower_is_better": true, "description": "Final loss value for the training dataset", "data": [{"dataset_name": "batch_size_16", "final_value": 0.0093, "best_value": 0.0093}, {"dataset_name": "batch_size_32", "final_value": 0.0138, "best_value": 0.0138}, {"dataset_name": "batch_size_64", "final_value": 0.0154, "best_value": 0.0154}]}]}], "is_best_node": [false, true, false], "plots": [["../../logs/0-run/experiment_results/experiment_f7bfa7125fa442d29637a5b73ea1f5c4_proc_21863/synthetic_data_training_loss_curve.png", "../../logs/0-run/experiment_results/experiment_f7bfa7125fa442d29637a5b73ea1f5c4_proc_21863/synthetic_data_predictions_vs_ground_truth.png"], ["../../logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/training_loss_lr_0.001.png", "../../logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/training_loss_lr_0.01.png", "../../logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/training_loss_lr_0.1.png", "../../logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/prediction_accuracy_lr_0.001.png", "../../logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/prediction_accuracy_lr_0.01.png", "../../logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/prediction_accuracy_lr_0.1.png"], []], "plot_paths": [["experiments/2025-11-21_22-19-58_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_f7bfa7125fa442d29637a5b73ea1f5c4_proc_21863/synthetic_data_training_loss_curve.png", "experiments/2025-11-21_22-19-58_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_f7bfa7125fa442d29637a5b73ea1f5c4_proc_21863/synthetic_data_predictions_vs_ground_truth.png"], ["experiments/2025-11-21_22-19-58_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/training_loss_lr_0.001.png", "experiments/2025-11-21_22-19-58_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/training_loss_lr_0.01.png", "experiments/2025-11-21_22-19-58_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/training_loss_lr_0.1.png", "experiments/2025-11-21_22-19-58_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/prediction_accuracy_lr_0.001.png", "experiments/2025-11-21_22-19-58_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/prediction_accuracy_lr_0.01.png", "experiments/2025-11-21_22-19-58_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/prediction_accuracy_lr_0.1.png"], []], "plot_analyses": [[{"analysis": "The plot of Predictions vs Ground Truth demonstrates a strong correlation between the predicted values and the actual ground truth, as evidenced by the points clustering around the dashed red line, which represents the ideal case of perfect predictions. The spread of points indicates that while the model performs well, there may still be some prediction errors, especially at the higher end of the ground truth values.", "plot_path": "experiments/2025-11-21_22-19-58_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_f7bfa7125fa442d29637a5b73ea1f5c4_proc_21863/synthetic_data_training_loss_curve.png"}], [{"analysis": "The plot displays the prediction accuracy for a learning rate of 0.1 over 50 epochs. Like the previous plots, there are no meaningful accuracy values, suggesting that the model did not achieve effective learning or evaluation with this learning rate.", "plot_path": "experiments/2025-11-21_22-19-58_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_72b136579ceb4c968f61e9afad3a0646_proc_22505/training_loss_lr_0.001.png"}], []], "vlm_feedback_summary": ["Two plots were analyzed: the training loss curve indicates effective learning\nwith some stabilization, while the predictions vs ground truth plot shows a\nstrong correlation, suggesting the model's predictions are closely aligned with\nactual values.", "The training loss plots indicate that a learning rate of 0.01 may provide the\nbest balance between effective learning and stability. However, the accuracy\nplots do not provide any useful information, indicating potential issues with\nmodel evaluation.", "[]"], "exec_time": [5.005924463272095, 9.310149908065796, 10.060540199279785], "exec_time_feedback": ["", "", ""], "datasets_successfully_tested": [["synthetic_data"], [""], []], "plot_code": ["import matplotlib.pyplot as plt\nimport numpy as np\nimport os\n\n# Setup working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\n\ntry:\n    experiment_data = np.load(\n        os.path.join(working_dir, \"experiment_data.npy\"), allow_pickle=True\n    ).item()\nexcept Exception as e:\n    print(f\"Error loading experiment data: {e}\")\n\n# Training Loss Curve\ntry:\n    plt.figure()\n    plt.plot(\n        experiment_data[\"synthetic_data\"][\"losses\"][\"train\"], label=\"Training Loss\"\n    )\n    plt.title(\"Training Loss Curve\")\n    plt.ylabel(\"Loss\")\n    plt.xlabel(\"Epoch\")\n    plt.legend()\n    plt.savefig(os.path.join(working_dir, \"synthetic_data_training_loss_curve.png\"))\n    plt.close()\nexcept Exception as e:\n    print(f\"Error creating training loss curve: {e}\")\n    plt.close()\n\n# Predictions vs Ground Truth\ntry:\n    predictions = np.array(experiment_data[\"synthetic_data\"][\"predictions\"])\n    ground_truth = np.array(experiment_data[\"synthetic_data\"][\"ground_truth\"])\n\n    plt.figure()\n    plt.scatter(ground_truth, predictions, alpha=0.5)\n    plt.title(\"Predictions vs Ground Truth\")\n    plt.xlabel(\"Ground Truth\")\n    plt.ylabel(\"Predictions\")\n    plt.plot(\n        [ground_truth.min(), ground_truth.max()],\n        [ground_truth.min(), ground_truth.max()],\n        \"r--\",\n    )  # 45-degree line\n    plt.savefig(\n        os.path.join(working_dir, \"synthetic_data_predictions_vs_ground_truth.png\")\n    )\n    plt.close()\nexcept Exception as e:\n    print(f\"Error creating predictions vs ground truth plot: {e}\")\n    plt.close()\n", "import matplotlib.pyplot as plt\nimport numpy as np\nimport os\n\nworking_dir = os.path.join(os.getcwd(), \"working\")\nexperiment_data = np.load(\n    os.path.join(working_dir, \"experiment_data.npy\"), allow_pickle=True\n).item()\n\n# Plot training losses for each learning rate\nfor lr in experiment_data[\"hyperparam_tuning_learning_rate\"]:\n    try:\n        plt.figure()\n        losses = experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"losses\"][\n            \"train\"\n        ]\n        plt.plot(losses, label=\"Training Loss\")\n        plt.title(f\"Training Loss for Learning Rate: {lr}\")\n        plt.xlabel(\"Epochs\")\n        plt.ylabel(\"Loss\")\n        plt.legend()\n        plt.savefig(os.path.join(working_dir, f\"training_loss_lr_{lr}.png\"))\n        plt.close()\n    except Exception as e:\n        print(f\"Error creating plots for training loss with lr {lr}: {e}\")\n        plt.close()\n\n# Plot prediction accuracy for each learning rate\nfor lr in experiment_data[\"hyperparam_tuning_learning_rate\"]:\n    try:\n        accuracy = experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"metrics\"][\n            \"train\"\n        ]\n        plt.figure()\n        plt.plot(accuracy, label=\"Prediction Accuracy\")\n        plt.title(f\"Prediction Accuracy for Learning Rate: {lr}\")\n        plt.xlabel(\"Epochs\")\n        plt.ylabel(\"Accuracy\")\n        plt.legend()\n        plt.savefig(os.path.join(working_dir, f\"prediction_accuracy_lr_{lr}.png\"))\n        plt.close()\n    except Exception as e:\n        print(f\"Error creating plots for prediction accuracy with lr {lr}: {e}\")\n        plt.close()\n", null], "plot_plan": ["To visualize the experimental results from `experiment_data.npy`, we will begin by loading the data and checking for the metrics, losses, and predictions available for the synthetic dataset. We will then create several plots: a training loss curve, a scatter plot comparing predictions against ground truth, and potentially others (such as validation losses if available) depending on the data present. Each plot will be enclosed in a try-except block for error handling, and all figures will be saved to a designated working directory with clearly defined filenames. Finally, we will ensure that all figures are properly closed after saving to prevent memory overload.", "The proposed solution involves creating visualizations for the key metrics and losses tracked during the training phase across different learning rates. First, we will load the experiment data from the specified `.npy` file. Then, we will create separate plots for training losses and prediction accuracy for each learning rate. The plots will include appropriate titles and will be saved in the `working_dir` directory with descriptive names. For the loss curves, we will generate a plot per learning rate, ensuring to label clearly on the axes. After generating each plot, we will close the figure to free memory. We will use try-except blocks for each plotting operation to handle exceptions gracefully.", null], "ablation_name": [null, null, null], "hyperparam_name": [null, "learning rate", "batch size"], "is_seed_node": [false, false, false], "is_seed_agg_node": [false, false, false], "parse_metrics_plan": ["I will load the `experiment_data.npy` file from the specified working directory\nand extract the metrics from the dataset. I'll ensure to print the name of the\ndataset followed by the specific metric names and their final values, following\nthe specified formatting guidelines.", "I will load the `experiment_data.npy` file from the specified working directory.\nThen I will extract and print the metrics for each learning rate used in the\nexperiments. The metrics will include train accuracy and train losses, while\nensuring the output is formatted to clearly state the names of the datasets and\nthe metrics.", "First, I will load the `experiment_data.npy` file from the specified working\ndirectory. Next, I will iterate through the metrics of each batch size and\nextract the relevant details, including the final training loss for each batch\nsize. I will ensure that I print the name of the dataset (which corresponds to\nthe batch size) and the specific metrics with clear labels as required."], "parse_metrics_code": ["import os\nimport numpy as np\n\n# Load experiment data\nexperiment_data = np.load(\n    os.path.join(os.getcwd(), \"working\", \"experiment_data.npy\"), allow_pickle=True\n).item()\n\n# Extract metrics\ndataset_name = \"synthetic_data\"\nmetrics = experiment_data[dataset_name][\"losses\"]\ntrain_losses = metrics[\"train\"]\nground_truth = experiment_data[dataset_name][\"ground_truth\"]\npredictions = experiment_data[dataset_name][\"predictions\"]\n\n# Compute accuracy\naccuracy = np.mean(np.isclose(predictions, ground_truth, atol=0.1))\n\n# Print metrics\nprint(f\"Dataset: {dataset_name}\")\nprint(f\"Final train loss: {train_losses[-1]:.4f}\")\nprint(f\"Final train accuracy: {accuracy:.4f}\")\n", "import os\nimport numpy as np\n\n# Load the experiment data\nexperiment_data = np.load(\n    os.path.join(os.getcwd(), \"working\", \"experiment_data.npy\"), allow_pickle=True\n).item()\n\n# Extract and print metrics for each learning rate\nfor lr in experiment_data[\"hyperparam_tuning_learning_rate\"]:\n    metrics = experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"metrics\"]\n    losses = experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"losses\"]\n\n    print(f\"Dataset: Learning Rate {lr}\")\n    if \"train\" in metrics:\n        print(\n            f\"Train Accuracy: {metrics['train'][-1]:.4f}\"\n        )  # Print the final train accuracy\n    if \"train\" in losses:\n        print(f\"Train Loss: {losses['train'][-1]:.4f}\")  # Print the final train loss\n", "import os\nimport numpy as np\n\n# Load experiment data\nexperiment_data = np.load(\n    os.path.join(os.getcwd(), \"working\", \"experiment_data.npy\"), allow_pickle=True\n).item()\n\n# Extract and print metrics\nfor batch_size_key, batch_data in experiment_data[\"batch_size_tuning\"].items():\n    print(f\"Dataset: {batch_size_key}\")\n    final_train_loss = batch_data[\"losses\"][\"train\"][-1]\n    print(f\"Final train loss: {final_train_loss:.4f}\")\n"], "parse_term_out": ["['Dataset: synthetic_data', '\\n', 'Final train loss: 0.0100', '\\n', 'Final train\naccuracy: 0.5950', '\\n', 'Execution time: a moment seconds (time limit is 10\nminutes).']", "['Dataset: Learning Rate 0.001', '\\n', 'Train Accuracy: 0.5950', '\\n', 'Train\nLoss: 0.0100', '\\n', 'Dataset: Learning Rate 0.01', '\\n', 'Train Accuracy:\n0.6050', '\\n', 'Train Loss: 0.0141', '\\n', 'Dataset: Learning Rate 0.1', '\\n',\n'Train Accuracy: 0.6025', '\\n', 'Train Loss: 0.0215', '\\n', 'Execution time: a\nmoment seconds (time limit is 10 minutes).']", "['Dataset: batch_size_16', '\\n', 'Final train loss: 0.0093', '\\n', 'Dataset:\nbatch_size_32', '\\n', 'Final train loss: 0.0138', '\\n', 'Dataset:\nbatch_size_64', '\\n', 'Final train loss: 0.0154', '\\n', 'Execution time: a\nmoment seconds (time limit is 10 minutes).']"], "parse_exc_type": [null, null, null], "parse_exc_info": [null, null, null], "parse_exc_stack": [null, null, null], "completed_stages": ["Stage_1", "Stage_2"], "current_stage": "Stage_2"};
+
+// Add log directory path and stage info to the tree data
+treeStructData.log_dir_path = window.location.pathname.split('/').slice(0, -1).join('/');
+treeStructData.current_stage = window.location.pathname.includes('stage_')
+  ? window.location.pathname.split('stage_')[1].split('/')[0]
+  : 'Stage_1';
+
+// Initialize background color
+window.bgColCurrent = bgCol;
+
+// Function to set background color that can be called from the console
+function setBackgroundColor(color) {
+  // Update the global color
+  updateBackgroundColor(color);
+
+  // Refresh the current sketch to apply the new background color
+  if (currentStage) {
+    startSketch(currentStage);
+  }
+}
+
+// Load all stage data and initialize the visualization
+loadAllStageData(treeStructData);
+
+    </script>
+    <title>AI Scientist-v2 Visualization</title>
+    <style>
+      body,
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background-color: #ffffff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      #canvas-container {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 40vw;
+        height: 100vh;
+        background-color: inherit;
+        padding-top: 40px;
+      }
+      canvas {
+        float: left;
+        height: 100vh;
+        width: 100vw;
+      }
+      #text-container {
+        float: right;
+        height: 100vh;
+        width: 50vw;
+        background-color: #282c34;
+        overflow: auto;
+      }
+      #plan {
+        /* border-left: 2px solid #282c34; */
+        background-color: #282c34;
+        color: #f2f0e7;
+        min-height: 5rem;
+        padding: 1em 0 1em 1em;
+      }
+      #plot_plan {
+        background-color: #282c34;
+        color: #f2f0e7;
+        min-height: 5rem;
+        padding: 1em 0 1em 1em;
+        white-space: pre-wrap;
+      }
+      #exec_time_feedback {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #282c34;
+        border-left: 3px solid #ff5555;
+        color: #f2f0e7;
+      }
+      #exec_time {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #282c34;
+        border-left: 3px solid #ff5555;
+        color: #f2f0e7;
+      }
+      #exc_info {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #2c1f1f;
+        border-left: 3px solid #ff5555;
+        color: #f2f0e7;
+      }
+      #metrics {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #282c34;
+        color: #f2f0e7;
+      }
+      #vlm_feedback {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #1f2c2f;
+        color: #f2f0e7;
+        border-left: 3px solid #55ff55;
+      }
+      #vlm_feedback p {
+        margin: 0.5em 0;
+        white-space: pre-wrap;
+      }
+      .datasets_successfully_tested {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #282c34;
+        color: #f2f0e7;
+        border-left: 3px solid #55ff55;
+      }
+      .plots-container {
+        float: right;
+        width: 50vw;
+        padding: 1rem;
+        background-color: #282c34;
+        margin-top: 1rem;
+      }
+
+      .plot-item {
+        flex: 1 1 300px;
+        max-width: 100%;
+        margin-bottom: 1rem;
+        white-space: pre-wrap;
+      }
+
+      .plot-item img {
+        width: 100%;
+        height: auto;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        display: block;
+      }
+
+      .metric-group {
+        margin-bottom: 20px;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+
+      .metric-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+      }
+
+      .metric-table th,
+      .metric-table td {
+        padding: 8px;
+        text-align: left;
+        border: 1px solid #ddd;
+      }
+
+      .metric-table th {
+        background-color: #363b44;
+      }
+
+      /* Styles for tabs */
+      .tabs-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 49vw;
+        background-color: #000000;
+        z-index: 10;
+        display: flex;
+        padding: 0;
+      }
+
+      .tab {
+        cursor: pointer;
+        padding: 10px 15px;
+        background-color: #333;
+        color: #f2f0e7;
+        border: none;
+        outline: none;
+        transition: background-color 0.3s;
+        flex: 1;
+        text-align: center;
+      }
+
+      .tab:hover {
+        background-color: #444;
+      }
+
+      .tab.active {
+        background-color: #4c76af;
+        font-weight: bold;
+      }
+
+      .tab.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        background-color: #282c34;
+      }
+
+      .tab-content {
+        display: none;
+        padding-top: 40px; /* Space for tabs */
+      }
+
+      .tab-content.active {
+        display: block;
+      }
+
+      .stage-info {
+        padding: 10px;
+        background-color: #282c34;
+        color: #f2f0e7;
+        margin-bottom: 10px;
+        font-size: 0.9em;
+      }
+
+      .stage-status {
+        display: inline-block;
+        padding: 3px 6px;
+        border-radius: 3px;
+        margin-left: 8px;
+        font-size: 0.8em;
+      }
+
+      .stage-status.completed {
+        background-color: #4caf50;
+      }
+
+      .stage-status.in-progress {
+        background-color: #2196f3;
+      }
+
+      .stage-status.not-started {
+        background-color: #9e9e9e;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="tabs-container" id="stage-tabs">
+      <button class="tab" data-stage="Stage_1" onclick="selectStage('Stage_1')">Stage 1</button>
+      <button class="tab" data-stage="Stage_2" onclick="selectStage('Stage_2')">Stage 2</button>
+      <button class="tab" data-stage="Stage_3" onclick="selectStage('Stage_3')">Stage 3</button>
+      <button class="tab" data-stage="Stage_4" onclick="selectStage('Stage_4')">Stage 4</button>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <pre id="text-container">
+        <div id="stage-info" class="stage-info"></div>
+        <div id="plan"></div>
+        <hr>
+        <div id="exc_info"></div>
+        <hr>
+        <div id="exec_time"></div>
+        <hr>
+        <div id="exec_time_feedback"></div>
+        <hr>
+        <div id="metrics"></div>
+        <hr>
+        <div id="plot_plan"></div>
+        <hr>
+        <div class="plots-container" id="plots"></div>
+        <hr>
+        <div id="vlm_feedback"></div>
+        <hr>
+        <div id="datasets_successfully_tested"></div>
+        <hr>
+        <code id="code" class="language-python"></code>
+        <hr>
+        <code id="plot_code" class="language-python"></code>
+    </pre>
+  </body>
+</html>
