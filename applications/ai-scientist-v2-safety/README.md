@@ -1,0 +1,1 @@
+A safety-informed series of improvements to Sakana AI's AI Scientist V2 paper with a custom series of rules and increased visibility into code execution to prevent unsafe novel research outputs from being run
