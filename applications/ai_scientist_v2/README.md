@@ -1,7 +1,48 @@
+I have attached the original **Sakana AI README** below for reference, attribution, and future exploration.
+However, **the added code will be explained above Sakana’s README.**
+
+---
+
+## Key Changes to the Sakana AI Repository
+
+### 1. **Safety Module**
+A new safety subsystem has been added under:
+`ai_scientist/safety/`  
+This module creates configurations for runtime safety checks, warnings, and ensuring controlled execution of generated experiment code.
+
+---
+
+### 2. **Modified Interpreter for Safer Execution**
+The experiment interpreter has been updated to enforce safety constraints.  
+Location: `ai_scientist/treesearch/interpreter.py`  
+This ensures safer execution of model-generated Python code by integrating the new safety mechanisms.
+
+---
+
+### 3. **Test Files (Safe vs. Unsafe Execution)**
+Test scripts are included under `ai_scientist_v2/`:
+- `test_safe.py` - should run with **no errors**  
+- `test_unsafe.py` - should **raise safety flags** for unsafe code
+These are simple examples illustrating how the interpreter implements static (linter) analysis via AST matching as a sanity check, however the true safety capabilities are visible when running the pipeline.
+
+---
+
+### 4. **Experiments**
+Experiments are located in the `experiments/` directory.  
+These demonstrate system behavior on custom prompts—e.g., **evaluating how LLMs can improve tool-use performance via self-reasoning loops**.
+
+---
+
+### 5. **Google Colab Environment**
+A ready-to-use Colab notebook is provided for:
+- Running experiments  
+- Interactive exploration  
+- Connecting to Google Drive for persistent storage  
+
+This offers a simple, accessible environment for testing and demonstration.
+
+---
 <div align="center">
-  <a href="https://github.com/SakanaAI/AI-Scientist_v2/blob/main/docs/logo_v1.jpg">
-    <img src="docs/logo_v1.png" width="215" alt="AI Scientist v2 Logo" />
-  </a>
   <h1>
     <b>The AI Scientist-v2: Workshop-Level Automated</b><br>
     <b>Scientific Discovery via Agentic Tree Search</b>
