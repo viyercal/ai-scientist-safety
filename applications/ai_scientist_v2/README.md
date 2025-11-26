@@ -1,4 +1,3 @@
-<div>
 I have attached the original **Sakana AI README** below for reference, attribution, and future exploration.
 However, **the added code will be explained above Sakana’s README.**
 
@@ -22,9 +21,9 @@ This ensures safer execution of model-generated Python code by integrating the n
 
 ### 3. **Test Files (Safe vs. Unsafe Execution)**
 Test scripts are included under `ai_scientist_v2/`:
-- `test_safe.py` — should run with **no errors**  
-- `test_unsafe.py` — should **raise safety flags** for unsafe code
-These are simple examples illustrating how the interpretter implements static (linter) analysis via AST matching as a sanity check, however the true safety capabilities are visible when running the pipeline.
+- `test_safe.py` - should run with **no errors**  
+- `test_unsafe.py` - should **raise safety flags** for unsafe code
+These are simple examples illustrating how the interpreter implements static (linter) analysis via AST matching as a sanity check, however the true safety capabilities are visible when running the pipeline.
 
 ---
 
@@ -43,7 +42,7 @@ A ready-to-use Colab notebook is provided for:
 This offers a simple, accessible environment for testing and demonstration.
 
 ---
-
+<div align="center">
   <h1>
     <b>The AI Scientist-v2: Workshop-Level Automated</b><br>
     <b>Scientific Discovery via Agentic Tree Search</b>
