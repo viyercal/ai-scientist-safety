@@ -385,5 +385,51 @@ class Interpreter:
             exc_info = {
             "AI Scientist Execution Info": basic_exc_info,
             "Custom Safety Execution Info": safety_meta
-          }
+            }
+            def agent_verify(code, safety_meta, model: str = "gpt-4o"):
+                """
+                Analyzes metadata to provide analysis and summary of the code execution's 
+                potential safety issues. This can be used for future improvements to the safety 
+                guidelines, and any required changes to the safety configuration/overall research pipeline.
+                As of now, integration of this analysis is manual, however this could be an automated
+                feedback loop for the agentic research system if desired.
+                Args:
+                    code: The surroudning code of the flagged issues
+                    safety_meta: Custom Safety Execution Info defined in the interpreter.run() function
+                    model: The model used to analyze these parameterws (defaults to gpt-4o)
+                Returns:
+                    A summary of the code execution's potential safety issues and any required changes to the safety configuration/overall research pipeline.
+                """
+                print("Agent verification started")
+                if safety_meta is None:
+                    return "No safety issues found"
+                else:
+                    from openai import OpenAI
+                    prompt_sys = """You are a safety analysis expert for AI-generated code execution.
+                            Your role is to analyze safety metadata from code execution and provide:
+                            1. A clear summary of key safety flags and their severity
+                            2. Specific recommendations for improving safety in future code generation if and only if the safety issues are severe.
+                            Be concise, actionable, and focus on practical improvements"""
+                    prompt_user = f"""Analyze the following safety information from an AI-generated code execution:
+                    SAFETY ISSUES DETECTED:
+                    {safety_meta}
+                    CODE PREVIEW (surrounding code lines):
+                    {code}Please provide:
+                    1. **Key Safety Flags Summary**: A brief overview of the most critical safety concerns
+                    2. **Severity Assessment**: Which issues pose the highest risk and why. If the severity is not severe, just say "No severe safety issues found".
+                    3. **Improvement Recommendations**: Specific, actionable suggestions if and only if the safety issues are severe:
+                    - How the code generation process could be improved to avoid these issues
+                    - What safety checks or constraints should be added
+                    - Best practices for future code generation to be more safety-conscious
+                    Format your response clearly with sections for each of the above points."""
+                        
+                    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"], base_url="https://openrouter.ai/api/v1")
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=[{"role": "system", "content": prompt_sys},
+                            {"role": "user", "content": prompt_user}])
+                    if response:
+                      return response.choices[0].message.content
+            agent_response = agent_verify(code, safety_meta, model = "gpt-4o")
+            exc_info["AI agent_response_to_safety_issues"] = agent_response
         return ExecutionResult(output, exec_time, e_cls_name, exc_info, exc_stack)

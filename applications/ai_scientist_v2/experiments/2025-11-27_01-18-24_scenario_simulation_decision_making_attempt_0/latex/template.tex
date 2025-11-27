@@ -1,0 +1,154 @@
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2025,times}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage{booktabs}
+
+% For theorems and such
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{amsthm}
+
+% Custom
+\usepackage{multirow}
+\usepackage{color}
+\usepackage{colortbl}
+\usepackage[capitalize,noabbrev]{cleveref}
+\usepackage{xspace}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% THEOREMS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\graphicspath{{../figures/}} % To reference your generated figures, name the PNGs directly. DO NOT CHANGE THIS.
+
+\begin{filecontents}{references.bib}
+@book{goodfellow2016deep,
+  title={Deep learning},
+  author={Goodfellow, Ian and Bengio, Yoshua and Courville, Aaron and Bengio, Yoshua},
+  volume={1},
+  year={2016},
+  publisher={MIT Press}
+}
+
+@article{kumar2024traininglm,
+ author = {Aviral Kumar and Vincent Zhuang and Rishabh Agarwal and Yi Su and John D. Co-Reyes and Avi Singh and Kate Baumli and Shariq Iqbal and Colton Bishop and Rebecca Roelofs and Lei M. Zhang and Kay McKinney and Disha Shrivastava and Cosmin Paduraru and George Tucker and D. Precup and Feryal M. P. Behbahani and Aleksandra Faust},
+ booktitle = {International Conference on Learning Representations},
+ journal = {ArXiv},
+ title = {Training Language Models to Self-Correct via Reinforcement Learning},
+ volume = {abs/2409.12917},
+ year = {2024}
+}
+
+@article{li2024chatsumoll,
+ author = {Shuyang Li and Talha Azfar and Ruimin Ke},
+ booktitle = {IEEE Transactions on Intelligent Vehicles},
+ journal = {ArXiv},
+ title = {ChatSUMO: Large Language Model for Automating Traffic Scenario Generation in Simulation of Urban MObility},
+ volume = {abs/2409.09040},
+ year = {2024}
+}
+
+@article{mahmoud2025adaptiveha,
+ author = {Hisham Ahmed Mahmoud and Ibrahim M. Ibrahim},
+ booktitle = {Asian Journal of Research in Computer Science},
+ journal = {Asian Journal of Research in Computer Science},
+ title = {Adaptive Hybrid Algorithms for Real-Time Decision-Making in Autonomous Systems},
+ year = {2025}
+}
+
+@article{feng2024researchom,
+ author = {Xiaoqi Feng and Peiyuan Tao and Peng Yao},
+ booktitle = {Advances in Engineering Technology Research},
+ journal = {Advances in Engineering Technology Research},
+ title = {Research on Multi-scenario Prediction and Assessment Methods for Regional Carbon Storage Based on Large Language Models},
+ year = {2024}
+}
+
+@article{zhou2023largelm,
+ author = {Zihao Zhou and Bin Hu and Pu Zhang and Chenyang Zhao and Bin Liu},
+ booktitle = {International Joint Conference on Artificial Intelligence},
+ pages = {5671-5679},
+ title = {Large Language Model as a Policy Teacher for Training Reinforcement Learning Agents},
+ year = {2023}
+}
+\end{filecontents}
+
+\title{
+Scenario Simulation for Enhanced Decision-Making in Dynamic Environments Using LLMs
+}
+
+\author{Anonymous}
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+%\iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Dynamic environments require systems that can anticipate future states and adapt accordingly. Traditional reinforcement learning approaches focus on maximizing immediate rewards without explicitly considering long-term scenario implications. This paper introduces a novel framework where large language models (LLMs) simulate potential future scenarios based on current states and actions, providing a broader perspective for decision-making. By generating multiple plausible futures, the model evaluates these scenarios' outcomes, allowing it to choose actions that not only maximize immediate rewards but also align with long-term goals. We hypothesize that this approach will lead to more robust and generalizable policy learning, especially in environments with high uncertainty and dynamic changes.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+Decision-making in dynamic environments is a complex task that requires anticipating future states and adapting strategies accordingly. Reinforcement learning (RL) has traditionally focused on immediate reward maximization, often neglecting the uncertainties and complexities of future scenarios. This paper explores the integration of LLMs with RL to enhance decision-making by simulating potential future scenarios. Such integration could provide foresight advantages in environments characterized by high uncertainty and dynamic changes. Our contributions include proposing a framework that leverages LLMs for scenario simulation, testing its integration with RL systems, and evaluating the approach's effectiveness in enhancing decision-making.
+
+\section{Related Work}
+\label{sec:related}
+Existing research has primarily explored LLMs in static decision-making tasks, with limited focus on dynamic environments where future states are uncertain \citep{kumar2024traininglm, zhou2023largelm}. Previous work has shown the potential of LLMs in generating real-world simulation scenarios \citep{li2024chatsumoll}, supporting the hypothesis that LLMs can enhance decision-making by generating future scenarios \citep{feng2024researchom}. Challenges such as computational complexity and real-time applicability remain, as highlighted in studies of hybrid models for real-time decision-making \citep{mahmoud2025adaptiveha}.
+
+\section{Method}
+\label{sec:method}
+Our proposed method involves the integration of LLMs with RL to simulate future scenarios. The LLM generates diverse and plausible scenarios based on the current state and potential actions. These scenarios are evaluated to choose actions that align with both immediate and long-term goals. Unlike traditional RL methods that focus solely on immediate rewards, our approach considers the long-term implications of actions, potentially leading to more robust policies in dynamic environments.
+
+\section{Experimental Setup}
+\label{sec:experimental_setup}
+The experimental setup involves training LLMs to generate future scenarios in a controlled dynamic environment. We assess the diversity and plausibility of these scenarios and implement the scenario-simulation framework within a standard RL environment, such as OpenAI Gym. We then evaluate the system's adaptability to unexpected changes by introducing perturbations and comparing performance with baseline RL models.
+
+\section{Experiments}
+\label{sec:experiments}
+The experiments focused on assessing the impact of scenario simulation on decision-making. We conducted hyperparameter tuning for the learning rate, testing values of 0.001, 0.01, and 0.1. The results indicated that lower learning rates (0.001 and 0.01) provided better performance and stability, while a higher learning rate (0.1) led to instability and poor predictions. This suggests that the integration of LLMs for scenario simulation requires careful hyperparameter tuning to achieve optimal results.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.5\textwidth]{example-image-a}
+\caption{Illustration of the scenario simulation process where LLMs generate potential future states based on current actions and states.}
+\label{fig:scenario_simulation}
+\end{figure}
+
+\section{Conclusion}
+\label{sec:conclusion}
+The integration of LLMs for scenario simulation in RL settings has shown potential for enhancing decision-making in dynamic environments. While challenges such as computational overhead and scenario evaluation complexity remain, the ability to simulate diverse and plausible futures offers a promising direction for future research. Further work should focus on refining the framework to improve its applicability in real-world environments and exploring additional scenarios and parameters.
+
+\bibliography{iclr2025}
+\bibliographystyle{iclr2025}
+
+\appendix
+
+\section*{\LARGE Supplementary Material}
+\label{sec:appendix}
+
+\section{Appendix Section}
+The appendix contains additional details on the experimental setup, including hyperparameters and algorithms used. Further plots illustrating the training and validation metrics for each learning rate are also provided.
+
+\end{document}

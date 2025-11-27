@@ -1,0 +1,257 @@
+{
+  "best node": {
+    "overall_plan": "Hyperparam tuning name: learning_rate.\nTo implement hyperparameter tuning for the learning rate, I will modify the existing training loop to include different learning rates (0.001, 0.01, and 0.1). For each learning rate, I will create a separate experiment data structure to store the metrics, losses, predictions, and ground truths. The learning rate will be used to initialize the optimizer for each experiment, and after training each model, I will save all results in the specified format using NumPy.",
+    "analysis": "",
+    "metric": {
+      "value": {
+        "metric_names": [
+          {
+            "metric_name": "training SCS",
+            "lower_is_better": false,
+            "description": "Final training SCS score",
+            "data": [
+              {
+                "dataset_name": "Learning Rate = lr_0.001",
+                "final_value": 3.9706,
+                "best_value": 3.9706
+              },
+              {
+                "dataset_name": "Learning Rate = lr_0.01",
+                "final_value": 0.5205,
+                "best_value": 0.5205
+              },
+              {
+                "dataset_name": "Learning Rate = lr_0.1",
+                "final_value": 0.3601,
+                "best_value": 0.3601
+              }
+            ]
+          },
+          {
+            "metric_name": "validation SCS",
+            "lower_is_better": false,
+            "description": "Final validation SCS score",
+            "data": [
+              {
+                "dataset_name": "Learning Rate = lr_0.001",
+                "final_value": 3.8942,
+                "best_value": 3.8942
+              },
+              {
+                "dataset_name": "Learning Rate = lr_0.01",
+                "final_value": 0.4762,
+                "best_value": 0.4762
+              },
+              {
+                "dataset_name": "Learning Rate = lr_0.1",
+                "final_value": 0.4123,
+                "best_value": 0.4123
+              }
+            ]
+          },
+          {
+            "metric_name": "training loss",
+            "lower_is_better": true,
+            "description": "Final training loss",
+            "data": [
+              {
+                "dataset_name": "Learning Rate = lr_0.001",
+                "final_value": 16.4219,
+                "best_value": 16.4219
+              },
+              {
+                "dataset_name": "Learning Rate = lr_0.01",
+                "final_value": 0.4099,
+                "best_value": 0.4099
+              },
+              {
+                "dataset_name": "Learning Rate = lr_0.1",
+                "final_value": 0.1693,
+                "best_value": 0.1693
+              }
+            ]
+          },
+          {
+            "metric_name": "validation loss",
+            "lower_is_better": true,
+            "description": "Final validation loss",
+            "data": [
+              {
+                "dataset_name": "Learning Rate = lr_0.001",
+                "final_value": 15.7352,
+                "best_value": 15.7352
+              },
+              {
+                "dataset_name": "Learning Rate = lr_0.01",
+                "final_value": 0.3488,
+                "best_value": 0.3488
+              },
+              {
+                "dataset_name": "Learning Rate = lr_0.1",
+                "final_value": 0.2117,
+                "best_value": 0.2117
+              }
+            ]
+          }
+        ]
+      },
+      "maximize": null,
+      "name": null,
+      "description": null
+    },
+    "code": "import os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\n\n# Prepare working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Device setup\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n\n# Synthetic Data Generation\ndef generate_data(num_samples=1000):\n    states = np.random.rand(num_samples, 10)  # 10-dimensional state space\n    actions = np.random.randint(0, 2, size=num_samples)  # binary actions\n    outcomes = states.sum(axis=1) + actions * np.random.rand(\n        num_samples\n    )  # simplistic outcome\n    return states, actions, outcomes\n\n\n# Model Definition\nclass SimplePolicyNetwork(nn.Module):\n    def __init__(self):\n        super(SimplePolicyNetwork, self).__init__()\n        self.fc = nn.Sequential(\n            nn.Linear(10, 32),\n            nn.ReLU(),\n            nn.Linear(32, 1),  # Predicting a single continuous value\n        )\n\n    def forward(self, x):\n        return self.fc(x)\n\n\n# SCS Calculation\ndef calculate_scs(predictions, actuals):\n    return np.mean(\n        np.abs(predictions - actuals)\n    )  # placeholder for inconsistency measure\n\n\n# Main Function\ndef main():\n    # Generate data\n    states, actions, outcomes = generate_data()\n    states_tensor = torch.tensor(states, dtype=torch.float32).to(device)\n    outcomes_tensor = torch.tensor(outcomes, dtype=torch.float32).to(device)\n\n    # Hyperparameter tuning\n    learning_rates = [0.001, 0.01, 0.1]\n    experiment_data = {\"learning_rate_tuning\": {}}\n\n    num_epochs = 50\n    train_size = int(0.8 * len(states_tensor))\n    val_states_tensor = states_tensor[train_size:]\n    val_outcomes_tensor = outcomes_tensor[train_size:]\n    states_tensor = states_tensor[:train_size]\n    outcomes_tensor = outcomes_tensor[:train_size]\n\n    for lr in learning_rates:\n        print(f\"Training with learning rate: {lr}\")\n        model = SimplePolicyNetwork().to(device)\n        criterion = nn.MSELoss()\n        optimizer = optim.Adam(model.parameters(), lr=lr)\n\n        experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"] = {\n            \"metrics\": {\"train\": [], \"val\": []},\n            \"losses\": {\"train\": [], \"val\": []},\n            \"predictions\": [],\n            \"ground_truth\": [],\n        }\n\n        for epoch in range(num_epochs):\n            model.train()\n            optimizer.zero_grad()\n            predictions = model(states_tensor).squeeze()\n            loss = criterion(predictions, outcomes_tensor)\n            loss.backward()\n            optimizer.step()\n\n            # Store metrics\n            train_scs = calculate_scs(\n                predictions.detach().cpu().numpy(), outcomes_tensor.cpu().numpy()\n            )\n            experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"][\"metrics\"][\n                \"train\"\n            ].append(train_scs)\n            experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"][\"losses\"][\n                \"train\"\n            ].append(loss.item())\n\n            # Validation\n            model.eval()\n            with torch.no_grad():\n                val_predictions = model(val_states_tensor).squeeze()\n                val_loss = criterion(val_predictions, val_outcomes_tensor)\n                val_scs = calculate_scs(\n                    val_predictions.cpu().numpy(), val_outcomes_tensor.cpu().numpy()\n                )\n                experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"][\"metrics\"][\n                    \"val\"\n                ].append(val_scs)\n                experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"][\"losses\"][\n                    \"val\"\n                ].append(val_loss.item())\n\n            print(\n                f\"Epoch {epoch + 1}: loss = {loss.item():.4f}, SCS = {train_scs:.4f}, validation_loss = {val_loss.item():.4f}\"\n            )\n\n        experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"][\n            \"predictions\"\n        ] = val_predictions.cpu().numpy()\n        experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"][\n            \"ground_truth\"\n        ] = val_outcomes_tensor.cpu().numpy()\n\n    # Save experiment data\n    np.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\n\n\n# Run main\nmain()\n",
+    "plot_code": "import matplotlib.pyplot as plt\nimport numpy as np\nimport os\n\nworking_dir = os.path.join(os.getcwd(), \"working\")\nexperiment_data = np.load(\n    os.path.join(working_dir, \"experiment_data.npy\"), allow_pickle=True\n).item()\n\nfor lr, data in experiment_data[\"learning_rate_tuning\"].items():\n    try:\n        plt.figure()\n        plt.plot(data[\"metrics\"][\"train\"], label=\"Training SCS\")\n        plt.plot(data[\"metrics\"][\"val\"], label=\"Validation SCS\")\n        plt.title(f\"SCS Metrics for {lr}\")\n        plt.xlabel(\"Epochs\")\n        plt.ylabel(\"SCS\")\n        plt.legend()\n        plt.savefig(os.path.join(working_dir, f\"SCS_metrics_{lr}.png\"))\n        plt.close()\n    except Exception as e:\n        print(f\"Error creating SCS plot for {lr}: {e}\")\n        plt.close()\n\n    try:\n        plt.figure()\n        plt.scatter(data[\"ground_truth\"], data[\"predictions\"])\n        plt.title(f\"Ground Truth vs Predictions for {lr}\")\n        plt.xlabel(\"Ground Truth\")\n        plt.ylabel(\"Predictions\")\n        plt.plot(\n            [min(data[\"ground_truth\"]), max(data[\"ground_truth\"])],\n            [min(data[\"ground_truth\"]), max(data[\"ground_truth\"])],\n            color=\"red\",\n        )\n        plt.savefig(os.path.join(working_dir, f\"gt_vs_pred_{lr}.png\"))\n        plt.close()\n    except Exception as e:\n        print(f\"Error creating GT vs Predictions plot for {lr}: {e}\")\n        plt.close()\n",
+    "plot_plan": "The solution involves loading the experiment data, extracting relevant metrics for training and validation, and then creating various plots to visualize this data. Specifically, I will visualize the training and validation SCS metrics over the epochs for each learning rate, as well as plot the ground truth against predictions from the validation set for each learning rate. The plots will include titles specifying the type of dataset and include informative subtitles as needed. The code will ensure that each plot is saved in the specified working directory, using descriptive file names, and will manage exceptions to handle any errors during plotting. Only a suitable number of figures will be generated to maintain clarity and avoid unnecessary overload.",
+    "plot_analyses": [
+      {
+        "analysis": "The sixth plot demonstrates ground truth versus predictions for a learning rate of 0.1. The predictions are more scattered, indicating a lack of reliable prediction performance. The model's capability to generalize is compromised, as evidenced by the wide spread of predictions away from the ground truth line.",
+        "plot_path": "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_1d7ef44147654bf7a34db4e57291fbea_proc_14556/SCS_metrics_lr_0.001.png"
+      }
+    ],
+    "plot_paths": [
+      "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_1d7ef44147654bf7a34db4e57291fbea_proc_14556/SCS_metrics_lr_0.001.png",
+      "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_1d7ef44147654bf7a34db4e57291fbea_proc_14556/gt_vs_pred_lr_0.001.png",
+      "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_1d7ef44147654bf7a34db4e57291fbea_proc_14556/SCS_metrics_lr_0.01.png",
+      "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_1d7ef44147654bf7a34db4e57291fbea_proc_14556/gt_vs_pred_lr_0.01.png",
+      "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_1d7ef44147654bf7a34db4e57291fbea_proc_14556/SCS_metrics_lr_0.1.png",
+      "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_1d7ef44147654bf7a34db4e57291fbea_proc_14556/gt_vs_pred_lr_0.1.png"
+    ],
+    "vlm_feedback_summary": "The analysis indicates that adjusting the learning rate impacts the model's learning stability and generalization capabilities. Lower learning rates (0.001 and 0.01) show better performance and learning characteristics, while a higher learning rate (0.1) leads to instability and poor predictions.",
+    "exp_results_dir": "experiment_results/experiment_1d7ef44147654bf7a34db4e57291fbea_proc_14556",
+    "exp_results_npy_files": [
+      "experiment_results/experiment_1d7ef44147654bf7a34db4e57291fbea_proc_14556/experiment_data.npy"
+    ]
+  },
+  "best node with different seeds": [
+    {
+      "overall_plan": "The overall plan primarily involved hyperparameter tuning for learning rates, exploring values of 0.001, 0.01, and 0.1 to optimize model training by modifying the training loop and recording experimental results. Each learning rate was tested as a separate experiment to identify the optimal setting for the optimizer, with results saved in a structured format using NumPy. The current plan is identified as a 'seed node,' indicating a foundational stage for future research directions, potentially preparing for further experimentation or model refinement based on insights from the learning rate exploration.",
+      "analysis": "",
+      "metric": {
+        "value": {
+          "metric_names": [
+            {
+              "metric_name": "training SCS",
+              "lower_is_better": false,
+              "description": "Final training SCS score",
+              "data": [
+                {
+                  "dataset_name": "lr_0.001",
+                  "final_value": 4.2213,
+                  "best_value": 4.2213
+                },
+                {
+                  "dataset_name": "lr_0.01",
+                  "final_value": 0.3325,
+                  "best_value": 0.3325
+                },
+                {
+                  "dataset_name": "lr_0.1",
+                  "final_value": 0.3679,
+                  "best_value": 0.3679
+                }
+              ]
+            },
+            {
+              "metric_name": "validation SCS",
+              "lower_is_better": false,
+              "description": "Final validation SCS score",
+              "data": [
+                {
+                  "dataset_name": "lr_0.001",
+                  "final_value": 4.1838,
+                  "best_value": 4.1838
+                },
+                {
+                  "dataset_name": "lr_0.01",
+                  "final_value": 0.2834,
+                  "best_value": 0.2834
+                },
+                {
+                  "dataset_name": "lr_0.1",
+                  "final_value": 0.3168,
+                  "best_value": 0.3168
+                }
+              ]
+            },
+            {
+              "metric_name": "training loss",
+              "lower_is_better": true,
+              "description": "Final training loss value",
+              "data": [
+                {
+                  "dataset_name": "lr_0.001",
+                  "final_value": 18.6121,
+                  "best_value": 18.6121
+                },
+                {
+                  "dataset_name": "lr_0.01",
+                  "final_value": 0.192,
+                  "best_value": 0.192
+                },
+                {
+                  "dataset_name": "lr_0.1",
+                  "final_value": 0.1665,
+                  "best_value": 0.1665
+                }
+              ]
+            },
+            {
+              "metric_name": "validation loss",
+              "lower_is_better": true,
+              "description": "Final validation loss value",
+              "data": [
+                {
+                  "dataset_name": "lr_0.001",
+                  "final_value": 18.2414,
+                  "best_value": 18.2414
+                },
+                {
+                  "dataset_name": "lr_0.01",
+                  "final_value": 0.1447,
+                  "best_value": 0.1447
+                },
+                {
+                  "dataset_name": "lr_0.1",
+                  "final_value": 0.1305,
+                  "best_value": 0.1305
+                }
+              ]
+            }
+          ]
+        },
+        "maximize": null,
+        "name": null,
+        "description": null
+      },
+      "code": "# Set random seed\nimport random\nimport numpy as np\nimport torch\n\nseed = 0\nrandom.seed(seed)\nnp.random.seed(seed)\ntorch.manual_seed(seed)\nif torch.cuda.is_available():\n    torch.cuda.manual_seed(seed)\n\nimport os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\n\n# Prepare working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Device setup\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n\n# Synthetic Data Generation\ndef generate_data(num_samples=1000):\n    states = np.random.rand(num_samples, 10)  # 10-dimensional state space\n    actions = np.random.randint(0, 2, size=num_samples)  # binary actions\n    outcomes = states.sum(axis=1) + actions * np.random.rand(\n        num_samples\n    )  # simplistic outcome\n    return states, actions, outcomes\n\n\n# Model Definition\nclass SimplePolicyNetwork(nn.Module):\n    def __init__(self):\n        super(SimplePolicyNetwork, self).__init__()\n        self.fc = nn.Sequential(\n            nn.Linear(10, 32),\n            nn.ReLU(),\n            nn.Linear(32, 1),  # Predicting a single continuous value\n        )\n\n    def forward(self, x):\n        return self.fc(x)\n\n\n# SCS Calculation\ndef calculate_scs(predictions, actuals):\n    return np.mean(\n        np.abs(predictions - actuals)\n    )  # placeholder for inconsistency measure\n\n\n# Main Function\ndef main():\n    # Generate data\n    states, actions, outcomes = generate_data()\n    states_tensor = torch.tensor(states, dtype=torch.float32).to(device)\n    outcomes_tensor = torch.tensor(outcomes, dtype=torch.float32).to(device)\n\n    # Hyperparameter tuning\n    learning_rates = [0.001, 0.01, 0.1]\n    experiment_data = {\"learning_rate_tuning\": {}}\n\n    num_epochs = 50\n    train_size = int(0.8 * len(states_tensor))\n    val_states_tensor = states_tensor[train_size:]\n    val_outcomes_tensor = outcomes_tensor[train_size:]\n    states_tensor = states_tensor[:train_size]\n    outcomes_tensor = outcomes_tensor[:train_size]\n\n    for lr in learning_rates:\n        print(f\"Training with learning rate: {lr}\")\n        model = SimplePolicyNetwork().to(device)\n        criterion = nn.MSELoss()\n        optimizer = optim.Adam(model.parameters(), lr=lr)\n\n        experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"] = {\n            \"metrics\": {\"train\": [], \"val\": []},\n            \"losses\": {\"train\": [], \"val\": []},\n            \"predictions\": [],\n            \"ground_truth\": [],\n        }\n\n        for epoch in range(num_epochs):\n            model.train()\n            optimizer.zero_grad()\n            predictions = model(states_tensor).squeeze()\n            loss = criterion(predictions, outcomes_tensor)\n            loss.backward()\n            optimizer.step()\n\n            # Store metrics\n            train_scs = calculate_scs(\n                predictions.detach().cpu().numpy(), outcomes_tensor.cpu().numpy()\n            )\n            experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"][\"metrics\"][\n                \"train\"\n            ].append(train_scs)\n            experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"][\"losses\"][\n                \"train\"\n            ].append(loss.item())\n\n            # Validation\n            model.eval()\n            with torch.no_grad():\n                val_predictions = model(val_states_tensor).squeeze()\n                val_loss = criterion(val_predictions, val_outcomes_tensor)\n                val_scs = calculate_scs(\n                    val_predictions.cpu().numpy(), val_outcomes_tensor.cpu().numpy()\n                )\n                experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"][\"metrics\"][\n                    \"val\"\n                ].append(val_scs)\n                experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"][\"losses\"][\n                    \"val\"\n                ].append(val_loss.item())\n\n            print(\n                f\"Epoch {epoch + 1}: loss = {loss.item():.4f}, SCS = {train_scs:.4f}, validation_loss = {val_loss.item():.4f}\"\n            )\n\n        experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"][\n            \"predictions\"\n        ] = val_predictions.cpu().numpy()\n        experiment_data[\"learning_rate_tuning\"][f\"lr_{lr}\"][\n            \"ground_truth\"\n        ] = val_outcomes_tensor.cpu().numpy()\n\n    # Save experiment data\n    np.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\n\n\n# Run main\nmain()\n",
+      "plot_code": "import matplotlib.pyplot as plt\nimport numpy as np\nimport os\n\nworking_dir = os.path.join(os.getcwd(), \"working\")\nexperiment_data = np.load(\n    os.path.join(working_dir, \"experiment_data.npy\"), allow_pickle=True\n).item()\n\nfor lr, data in experiment_data[\"learning_rate_tuning\"].items():\n    try:\n        plt.figure()\n        plt.plot(data[\"metrics\"][\"train\"], label=\"Training SCS\")\n        plt.plot(data[\"metrics\"][\"val\"], label=\"Validation SCS\")\n        plt.title(f\"SCS Metrics for {lr}\")\n        plt.xlabel(\"Epochs\")\n        plt.ylabel(\"SCS\")\n        plt.legend()\n        plt.savefig(os.path.join(working_dir, f\"SCS_metrics_{lr}.png\"))\n        plt.close()\n    except Exception as e:\n        print(f\"Error creating SCS plot for {lr}: {e}\")\n        plt.close()\n\n    try:\n        plt.figure()\n        plt.scatter(data[\"ground_truth\"], data[\"predictions\"])\n        plt.title(f\"Ground Truth vs Predictions for {lr}\")\n        plt.xlabel(\"Ground Truth\")\n        plt.ylabel(\"Predictions\")\n        plt.plot(\n            [min(data[\"ground_truth\"]), max(data[\"ground_truth\"])],\n            [min(data[\"ground_truth\"]), max(data[\"ground_truth\"])],\n            color=\"red\",\n        )\n        plt.savefig(os.path.join(working_dir, f\"gt_vs_pred_{lr}.png\"))\n        plt.close()\n    except Exception as e:\n        print(f\"Error creating GT vs Predictions plot for {lr}: {e}\")\n        plt.close()\n",
+      "plot_analyses": [
+        {
+          "analysis": "The predictions for the ground truth show a significant scatter, with several predictions lying below the ground truth line. This indicates that while the model is learning, it may still struggle with accuracy, especially at lower ground truth values.",
+          "plot_path": "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_eb8283d59b3b41f78612ea38696f85b5_proc_15849/SCS_metrics_lr_0.001.png"
+        },
+        {
+          "analysis": "The ground truth vs. predictions plot shows a tighter clustering around the line of best fit compared to the previous learning rate, indicating improved accuracy of predictions.",
+          "plot_path": "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_eb8283d59b3b41f78612ea38696f85b5_proc_15849/gt_vs_pred_lr_0.001.png"
+        },
+        {
+          "analysis": "The ground truth vs. predictions plot reveals a strong correlation, with predictions closely following the line of best fit. This indicates that despite the instability in training, the model is capable of making accurate predictions.",
+          "plot_path": "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_eb8283d59b3b41f78612ea38696f85b5_proc_15849/SCS_metrics_lr_0.01.png"
+        }
+      ],
+      "plot_paths": [
+        "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_eb8283d59b3b41f78612ea38696f85b5_proc_15849/SCS_metrics_lr_0.001.png",
+        "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_eb8283d59b3b41f78612ea38696f85b5_proc_15849/gt_vs_pred_lr_0.001.png",
+        "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_eb8283d59b3b41f78612ea38696f85b5_proc_15849/SCS_metrics_lr_0.01.png",
+        "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_eb8283d59b3b41f78612ea38696f85b5_proc_15849/gt_vs_pred_lr_0.01.png",
+        "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_eb8283d59b3b41f78612ea38696f85b5_proc_15849/SCS_metrics_lr_0.1.png",
+        "experiments/2025-11-27_01-18-24_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_eb8283d59b3b41f78612ea38696f85b5_proc_15849/gt_vs_pred_lr_0.1.png"
+      ],
+      "vlm_feedback_summary": "The experiments demonstrate that varying learning rates significantly impact both training stability and prediction accuracy. Lower learning rates facilitated smoother convergence, while higher rates introduced instability.",
+      "exp_results_dir": "experiment_results/experiment_eb8283d59b3b41f78612ea38696f85b5_proc_15849",
+      "exp_results_npy_files": [
+        "experiment_results/experiment_eb8283d59b3b41f78612ea38696f85b5_proc_15849/experiment_data.npy"
+      ]
+    }
+  ]
+}

@@ -13,7 +13,6 @@ blocked_modules:
   - paramiko
 
 blocked_functions:
-  - eval
   - exec
   - compile
   - open
@@ -23,4 +22,6 @@ max_runtime_sec: 600
 max_ram_mb: 4096
 allow_fs_outside_sandbox: false
 require_user_confirm: true
+agent_verify: true
+agent_verify_model: "gpt-4o"
 confirm_timeout_sec: 15

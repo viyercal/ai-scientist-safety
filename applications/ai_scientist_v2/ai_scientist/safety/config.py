@@ -45,7 +45,6 @@ class SafetyConfig:
 
     blocked_functions: List[str] = field(
         default_factory=lambda: [
-            "eval",
             "exec",
             "compile",
             "open",

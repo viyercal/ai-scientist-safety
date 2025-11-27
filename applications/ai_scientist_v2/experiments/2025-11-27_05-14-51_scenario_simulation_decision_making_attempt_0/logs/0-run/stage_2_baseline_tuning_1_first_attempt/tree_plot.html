@@ -1,0 +1,993 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Check if we're running under Live Server
+      if (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') {
+          let lastModified = '';
+
+          // Check for file changes every second
+          setInterval(async () => {
+              try {
+                  const response = await fetch(window.location.href, { method: 'HEAD' });
+                  // get a timestamp that shows when the file was last changed
+                  const currentModified = response.headers.get('last-modified');
+
+                  if (lastModified && lastModified !== currentModified) {
+                      window.location.reload();
+                  }
+
+                  lastModified = currentModified;
+              } catch (e) {
+                  console.error('Error checking for updates:', e);
+              }
+          }, 1000);
+      }
+  </script>
+    <script
+      id="p5scripttag"
+      src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"
+      integrity="sha512-uaz5GpnQoE6t5echKlX8P52czvsIGgLPcvlzfvRubLZ1Hp8JemUDnbUiAahbVtPb+jUVrNETuXvAhDDF/N3M4w=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
+
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+
+    <script>
+      const bgCol = "#FFFFFF";
+const accentCol = "#1a439e";
+
+hljs.initHighlightingOnLoad();
+
+// Function to update background color globally
+function updateBackgroundColor(color) {
+  // Update the JS variable
+  window.bgColCurrent = color;
+
+  // Update body background
+  document.body.style.backgroundColor = color;
+
+  // Update canvas container background
+  const canvasContainer = document.getElementById('canvas-container');
+  if (canvasContainer) {
+    canvasContainer.style.backgroundColor = color;
+  }
+}
+
+// Store tree data for each stage
+const stageData = {
+  Stage_1: null,
+  Stage_2: null,
+  Stage_3: null,
+  Stage_4: null
+};
+
+// Keep track of current selected stage
+let currentStage = null;
+let currentSketch = null;
+let availableStages = [];
+
+// Class definitions for nodes and edges
+class Node {
+  constructor(x, y, id, isRoot = false) {
+    this.x = x;
+    this.y = y;
+    this.id = id;
+    this.visible = isRoot; // Only root nodes are visible initially
+    this.appearProgress = 0;
+    this.popEffect = 0;
+    this.selected = false;
+    this.isRootNode = isRoot;
+  }
+
+  update() {
+    if (this.visible) {
+      // Handle the main appearance animation
+      if (this.appearProgress < 1) {
+        this.appearProgress += 0.06;
+
+        // When we reach full size, trigger the pop effect
+        if (this.appearProgress >= 1) {
+          this.appearProgress = 1; // Cap at 1
+          this.popEffect = 1; // Start the pop effect
+        }
+      }
+
+      // Handle the pop effect animation
+      if (this.popEffect > 0) {
+        this.popEffect -= 0.15; // Control how quickly it shrinks back
+        if (this.popEffect < 0) this.popEffect = 0; // Don't go negative
+      }
+    }
+  }
+
+  startAnimation() {
+    this.visible = true;
+  }
+
+  color() {
+    if (this.selected) {
+      return accentCol; // Use the global accent color variable for selected node
+    }
+    return '#4263eb'; // Default blue color
+  }
+
+  render(p5) {
+    if (this.visible) {
+      const popBonus = this.popEffect * 0.1;
+      const nodeScale = p5.map(this.appearProgress, 0, 1, 0, 1) + popBonus;
+      const alpha = p5.map(this.appearProgress, 0, 1, 0, 255);
+
+      p5.push();
+      p5.translate(this.x, this.y);
+
+      // Shadow effect
+      p5.noStroke();
+      p5.rectMode(p5.CENTER);
+
+      for (let i = 1; i <= 4; i++) {
+        p5.fill(0, 0, 0, alpha * 0.06);
+        p5.rect(i, i, 30 * nodeScale, 30 * nodeScale, 10);
+      }
+
+      // Main square - use node's color with alpha
+      let nodeColor = p5.color(this.color());
+      nodeColor.setAlpha(alpha);
+      p5.fill(nodeColor);
+      p5.rect(0, 0, 30 * nodeScale, 30 * nodeScale, 10);
+
+      // Draw checkmark icon if the node is selected
+      if (this.selected && this.appearProgress >= 1) {
+        p5.stroke(255);
+        p5.strokeWeight(2 * nodeScale);
+        p5.noFill();
+        // Draw checkmark
+        p5.beginShape();
+        p5.vertex(-8, 0);
+        p5.vertex(-3, 5);
+        p5.vertex(8, -6);
+        p5.endShape();
+      }
+
+      p5.pop();
+    }
+  }
+
+  isMouseOver(p5) {
+    return this.visible &&
+           p5.mouseX > this.x - 15 &&
+           p5.mouseX < this.x + 15 &&
+           p5.mouseY > this.y - 15 &&
+           p5.mouseY < this.y + 15;
+  }
+
+  // Connect this node to a child node
+  child(childNode) {
+    // Create an edge from this node to the child
+    let isLeft = childNode.x < this.x;
+    let isRight = childNode.x > this.x;
+    let edge = new Edge(this, childNode, isLeft, isRight);
+    return edge;
+  }
+}
+
+class Edge {
+  constructor(parent, child, isLeft, isRight) {
+    this.parent = parent;
+    this.child = child;
+    this.isLeft = isLeft;
+    this.isRight = isRight;
+    this.progress = 0;
+
+    // Calculate the midpoint where branching occurs
+    this.midY = parent.y + (child.y - parent.y) * 0.6;
+
+    // Use the actual child x-coordinate
+    // This ensures the edge will connect directly to the child node
+    this.branchX = child.x;
+  }
+
+  update() {
+    if (this.parent.visible && this.progress < 1) {
+      this.progress += 0.01; // Adjust animation speed
+    }
+    if (this.progress >= 1) {
+      this.child.visible = true;
+    }
+  }
+
+  color() {
+    return this.child.color();
+  }
+
+  render(p5) {
+    if (!this.parent.visible) return;
+
+    // Calculate path lengths
+    const verticalDist1 = this.midY - this.parent.y;
+    const horizontalDist = Math.abs(this.branchX - this.parent.x);
+    const verticalDist2 = this.child.y - this.midY;
+    const totalLength = verticalDist1 + horizontalDist + verticalDist2;
+
+    // Calculate how much of each segment to draw
+    const currentLength = totalLength * this.progress;
+
+    p5.stroke(180, 190, 205);
+    p5.strokeWeight(1.5);
+    p5.noFill();
+
+    // Always draw the first vertical segment from parent
+    if (currentLength > 0) {
+      const firstSegmentLength = Math.min(currentLength, verticalDist1);
+      const currentMidY = p5.lerp(this.parent.y, this.midY, firstSegmentLength / verticalDist1);
+      p5.line(this.parent.x, this.parent.y, this.parent.x, currentMidY);
+    }
+
+    if (currentLength > verticalDist1) {
+      // Draw second segment (horizontal)
+      const secondSegmentLength = Math.min(currentLength - verticalDist1, horizontalDist);
+      const currentBranchX = p5.lerp(this.parent.x, this.branchX, secondSegmentLength / horizontalDist);
+      p5.line(this.parent.x, this.midY, currentBranchX, this.midY);
+
+      if (currentLength > verticalDist1 + horizontalDist) {
+        // Draw third segment (vertical to child)
+        const thirdSegmentLength = currentLength - verticalDist1 - horizontalDist;
+        const currentChildY = p5.lerp(this.midY, this.child.y, thirdSegmentLength / verticalDist2);
+        p5.line(this.branchX, this.midY, this.branchX, currentChildY);
+      }
+    }
+  }
+}
+
+// Create a modified sketch for each stage
+function createTreeSketch(stageId) {
+  return function(p5) {
+    let nodes = [];
+    let edges = [];
+    let treeData = stageData[stageId];
+
+    p5.setup = function() {
+      const canvas = p5.createCanvas(p5.windowWidth * 0.4, p5.windowHeight);
+      canvas.parent('canvas-container');
+      p5.smooth();
+      p5.frameRate(60);
+
+      if (treeData) {
+        createTreeFromData(treeData);
+      }
+    };
+
+    p5.windowResized = function() {
+      p5.resizeCanvas(p5.windowWidth * 0.4, p5.windowHeight);
+    };
+
+    function createTreeFromData(data) {
+      // Clear existing nodes and edges
+      nodes = [];
+      edges = [];
+
+      // Add defensive checks to prevent errors
+      if (!data || !data.layout || !Array.isArray(data.layout) || !data.edges || !Array.isArray(data.edges)) {
+        console.error("Invalid tree data format:", data);
+        return; // Exit if data structure is invalid
+      }
+
+      // Find all parent nodes in edges
+      const parentNodes = new Set();
+      for (const [parentId, childId] of data.edges) {
+        parentNodes.add(parentId);
+      }
+
+      // Create nodes
+      for (let i = 0; i < data.layout.length; i++) {
+        const [nx, ny] = data.layout[i];
+        // A node is a root if it's a parent and not a child in any edge
+        const isRoot = parentNodes.has(i) && data.edges.every(edge => edge[1] !== i);
+
+        const node = new Node(
+          nx * p5.width * 0.8 + p5.width * 0.1,
+          ny * p5.height * 0.8 + p5.height * 0.1,
+          i,
+          isRoot
+        );
+        nodes.push(node);
+      }
+
+      // If no root was found, make the first parent node visible
+      if (!nodes.some(node => node.visible) && parentNodes.size > 0) {
+        // Get the first parent node
+        const firstParentId = [...parentNodes][0];
+        if (nodes[firstParentId]) {
+          nodes[firstParentId].visible = true;
+        }
+      }
+
+      // Create edges
+      for (const [parentId, childId] of data.edges) {
+        const parent = nodes[parentId];
+        const child = nodes[childId];
+        if (parent && child) { // Verify both nodes exist
+          const isLeft = child.x < parent.x;
+          const isRight = child.x > parent.x;
+          edges.push(new Edge(parent, child, isLeft, isRight));
+        }
+      }
+
+      // Select the first node by default
+      if (nodes.length > 0) {
+        nodes[0].selected = true;
+        updateNodeInfo(0);
+      }
+    }
+
+    p5.draw = function() {
+      // Use the global background color if available, otherwise use the default bgCol
+      const currentBgColor = window.bgColCurrent || bgCol;
+      p5.background(currentBgColor);
+
+      // Update and render edges
+      for (const edge of edges) {
+        edge.update();
+        edge.render(p5);
+      }
+
+      // Update and render nodes
+      for (const node of nodes) {
+        node.update();
+        node.render(p5);
+      }
+
+      // Handle mouse hover
+      p5.cursor(p5.ARROW);
+      for (const node of nodes) {
+        if (node.isMouseOver(p5)) {
+          p5.cursor(p5.HAND);
+        }
+      }
+    };
+
+    p5.mousePressed = function() {
+      // Check if any node was clicked
+      for (let i = 0; i < nodes.length; i++) {
+        if (nodes[i].visible && nodes[i].isMouseOver(p5)) {
+          // Deselect all nodes
+          nodes.forEach(n => n.selected = false);
+          // Select the clicked node
+          nodes[i].selected = true;
+          // Update the right panel with node info
+          updateNodeInfo(i);
+          break;
+        }
+      }
+    };
+
+    function updateNodeInfo(nodeIndex) {
+      if (treeData) {
+        setNodeInfo(
+          treeData.code[nodeIndex],
+          treeData.plan[nodeIndex],
+          treeData.plot_code?.[nodeIndex],
+          treeData.plot_plan?.[nodeIndex],
+          treeData.metrics?.[nodeIndex],
+          treeData.exc_type?.[nodeIndex] || '',
+          treeData.exc_info?.[nodeIndex]?.args?.[0] || '',
+          treeData.exc_stack?.[nodeIndex] || [],
+          treeData.plots?.[nodeIndex] || [],
+          treeData.plot_analyses?.[nodeIndex] || [],
+          treeData.vlm_feedback_summary?.[nodeIndex] || '',
+          treeData.datasets_successfully_tested?.[nodeIndex] || [],
+          treeData.exec_time_feedback?.[nodeIndex] || '',
+          treeData.exec_time?.[nodeIndex] || ''
+        );
+      }
+    }
+  };
+}
+
+// Start a new p5 sketch for the given stage
+function startSketch(stageId) {
+  if (currentSketch) {
+    currentSketch.remove();
+  }
+
+  if (stageData[stageId]) {
+    currentSketch = new p5(createTreeSketch(stageId));
+
+    // Update stage info
+    const stageNumber = stageId.split('_')[1];
+    let stageDesc = '';
+    switch(stageId) {
+      case 'Stage_1': stageDesc = 'Preliminary Investigation'; break;
+      case 'Stage_2': stageDesc = 'Baseline Tuning'; break;
+      case 'Stage_3': stageDesc = 'Research Agenda Execution'; break;
+      case 'Stage_4': stageDesc = 'Ablation Studies'; break;
+    }
+
+    document.getElementById('stage-info').innerHTML =
+      `<strong>Current Stage: ${stageNumber} - ${stageDesc}</strong>`;
+  }
+}
+
+// Handle tab selection
+function selectStage(stageId) {
+  if (!stageData[stageId] || !availableStages.includes(stageId)) {
+    return; // Don't allow selection of unavailable stages
+  }
+
+  // Update active tab styles
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.classList.remove('active');
+  });
+  document.querySelector(`.tab[data-stage="${stageId}"]`).classList.add('active');
+
+  // Start the new sketch
+  currentStage = stageId;
+  startSketch(stageId);
+}
+
+// Function to load the tree data for all stages
+async function loadAllStageData(baseTreeData) {
+  console.log("Loading stage data with base data:", baseTreeData);
+
+  // The base tree data is for the current stage
+  const currentStageId = baseTreeData.current_stage || 'Stage_1';
+
+  // Ensure base tree data is valid and has required properties
+  if (baseTreeData && baseTreeData.layout && baseTreeData.edges) {
+    stageData[currentStageId] = baseTreeData;
+    availableStages.push(currentStageId);
+    console.log(`Added current stage ${currentStageId} to available stages`);
+  } else {
+    console.warn(`Current stage ${currentStageId} data is invalid:`, baseTreeData);
+  }
+
+  // Use relative path to load other stage trees
+  const logDirPath = baseTreeData.log_dir_path || '.';
+  console.log("Log directory path:", logDirPath);
+
+  // Load data for each stage if available
+  const stageNames = ['Stage_1', 'Stage_2', 'Stage_3', 'Stage_4'];
+  const stageNames2actualNames = {
+    'Stage_1': 'stage_1_initial_implementation_1_preliminary',
+    'Stage_2': 'stage_2_baseline_tuning_1_first_attempt',
+    'Stage_3': 'stage_3_creative_research_1_first_attempt',
+    'Stage_4': 'stage_4_ablation_studies_1_first_attempt'
+    }
+
+  for (const stage of stageNames) {
+
+    if (baseTreeData.completed_stages && baseTreeData.completed_stages.includes(stage)) {
+      try {
+        console.log(`Attempting to load data for ${stage} from ${logDirPath}/${stageNames2actualNames[stage]}/tree_data.json`);
+        const response = await fetch(`${logDirPath}/${stageNames2actualNames[stage]}/tree_data.json`);
+
+        if (response.ok) {
+          const data = await response.json();
+
+          // Validate the loaded data
+          if (data && data.layout && data.edges) {
+            stageData[stage] = data;
+            availableStages.push(stage);
+            console.log(`Successfully loaded and validated data for ${stage}`);
+          } else {
+            console.warn(`Loaded data for ${stage} is invalid:`, data);
+          }
+        } else {
+          console.warn(`Failed to load data for ${stage} - HTTP status ${response.status}`);
+        }
+      } catch (error) {
+        console.error(`Error loading data for ${stage}:`, error);
+      }
+    } else {
+      console.log(`Skipping stage ${stage} - not in completed stages list:`, baseTreeData.completed_stages);
+    }
+  }
+
+  // Update tab visibility based on available stages
+  updateTabVisibility();
+
+  // Start with the first available stage
+  if (availableStages.length > 0) {
+    selectStage(availableStages[0]);
+  } else {
+    console.warn("No stages available to display");
+    // Display a message in the canvas area
+    document.getElementById('canvas-container').innerHTML =
+      '<div style="padding: 20px; color: #333; text-align: center;"><h3>No valid tree data available to display</h3></div>';
+  }
+}
+
+// Update tab visibility based on available stages
+function updateTabVisibility() {
+  const tabs = document.querySelectorAll('.tab');
+  tabs.forEach(tab => {
+    const stageId = tab.getAttribute('data-stage');
+    if (availableStages.includes(stageId)) {
+      tab.classList.remove('disabled');
+    } else {
+      tab.classList.add('disabled');
+    }
+  });
+}
+
+// Utility function to set the node info in the right panel
+const setNodeInfo = (code, plan, plot_code, plot_plan, metrics = null, exc_type = '', exc_info = '',
+    exc_stack = [], plots = [], plot_analyses = [], vlm_feedback_summary = '',
+    datasets_successfully_tested = [], exec_time_feedback = '', exec_time = '') => {
+  const codeElm = document.getElementById("code");
+  if (codeElm) {
+    if (code) {
+      codeElm.innerHTML = hljs.highlight(code, { language: "python" }).value;
+    } else {
+      codeElm.innerHTML = '<p>No code available</p>';
+    }
+  }
+
+  const planElm = document.getElementById("plan");
+  if (planElm) {
+    if (plan) {
+      planElm.innerHTML = hljs.highlight(plan, { language: "plaintext" }).value;
+    } else {
+      planElm.innerHTML = '<p>No plan available</p>';
+    }
+  }
+
+  const plot_codeElm = document.getElementById("plot_code");
+  if (plot_codeElm) {
+    if (plot_code) {
+      plot_codeElm.innerHTML = hljs.highlight(plot_code, { language: "python" }).value;
+    } else {
+      plot_codeElm.innerHTML = '<p>No plot code available</p>';
+    }
+  }
+
+  const plot_planElm = document.getElementById("plot_plan");
+  if (plot_planElm) {
+    if (plot_plan) {
+      plot_planElm.innerHTML = hljs.highlight(plot_plan, { language: "plaintext" }).value;
+    } else {
+      plot_planElm.innerHTML = '<p>No plot plan available</p>';
+    }
+  }
+
+  const metricsElm = document.getElementById("metrics");
+  if (metricsElm) {
+      let metricsContent = `<h3>Metrics:</h3>`;
+      if (metrics && metrics.metric_names) {
+          for (const metric of metrics.metric_names) {
+              metricsContent += `<div class="metric-group">`;
+              metricsContent += `<h4>${metric.metric_name}</h4>`;
+              metricsContent += `<p><strong>Description:</strong> ${metric.description || 'N/A'}</p>`;
+              metricsContent += `<p><strong>Optimization:</strong> ${metric.lower_is_better ? 'Minimize' : 'Maximize'}</p>`;
+
+              // Create table for dataset values
+              metricsContent += `<table class="metric-table">
+                  <tr>
+                      <th>Dataset</th>
+                      <th>Final Value</th>
+                      <th>Best Value</th>
+                  </tr>`;
+
+              for (const dataPoint of metric.data) {
+                  metricsContent += `<tr>
+                      <td>${dataPoint.dataset_name}</td>
+                      <td>${dataPoint.final_value?.toFixed(4) || 'N/A'}</td>
+                      <td>${dataPoint.best_value?.toFixed(4) || 'N/A'}</td>
+                  </tr>`;
+              }
+
+              metricsContent += `</table></div>`;
+          }
+      } else if (metrics === null) {
+          metricsContent += `<p>No metrics available</p>`;
+      }
+      metricsElm.innerHTML = metricsContent;
+  }
+
+  // Add plots display
+  const plotsElm = document.getElementById("plots");
+  if (plotsElm) {
+      if (plots && plots.length > 0) {
+          let plotsContent = '';
+          plots.forEach(plotPath => {
+              plotsContent += `
+                  <div class="plot-item">
+                      <img src="${plotPath}" alt="Experiment Plot" onerror="console.error('Failed to load plot:', this.src)"/>
+                  </div>`;
+          });
+          plotsElm.innerHTML = plotsContent;
+      } else {
+          plotsElm.innerHTML = '';
+      }
+  }
+
+  // Add error info display
+  const errorElm = document.getElementById("exc_info");
+  if (errorElm) {
+    if (exc_type) {
+      let errorContent = `<h3 style="color: #ff5555">Exception Information:</h3>
+                          <p><strong>Type:</strong> ${exc_type}</p>`;
+
+      if (exc_info) {
+        errorContent += `<p><strong>Details:</strong> <pre>${JSON.stringify(exc_info, null, 2)}</pre></p>`;
+      }
+
+      if (exc_stack) {
+        errorContent += `<p><strong>Stack Trace:</strong> <pre>${exc_stack.join('\n')}</pre></p>`;
+      }
+
+      errorElm.innerHTML = errorContent;
+    } else {
+      errorElm.innerHTML = "No exception info available";
+    }
+  }
+
+  const exec_timeElm = document.getElementById("exec_time");
+  if (exec_timeElm) {
+    let exec_timeContent = '<div id="exec_time"><h3>Execution Time (in seconds):</h3><p>' + exec_time + '</p></div>';
+    exec_timeElm.innerHTML = exec_timeContent;
+  }
+
+  const exec_time_feedbackElm = document.getElementById("exec_time_feedback");
+  if (exec_time_feedbackElm) {
+    let exec_time_feedbackContent = '<div id="exec_time_feedback_content">'
+    exec_time_feedbackContent += '<h3>Execution Time Feedback:</h3>'
+    exec_time_feedbackContent += '<p>' + exec_time_feedback + '</p>'
+    exec_time_feedbackContent += '</div>';
+    exec_time_feedbackElm.innerHTML = exec_time_feedbackContent;
+  }
+
+  const vlm_feedbackElm = document.getElementById("vlm_feedback");
+  if (vlm_feedbackElm) {
+      let vlm_feedbackContent = '';
+
+      if (plot_analyses && plot_analyses.length > 0) {
+          vlm_feedbackContent += `<h3>Plot Analysis:</h3>`;
+          plot_analyses.forEach(analysis => {
+              if (analysis && analysis.plot_path) {  // Add null check
+                  vlm_feedbackContent += `
+                      <div class="plot-analysis">
+                          <h4>Analysis for ${analysis.plot_path.split('/').pop()}</h4>
+                          <p>${analysis.analysis || 'No analysis available'}</p>
+                          <ul class="key-findings">
+                              ${(analysis.key_findings || []).map(finding => `<li>${finding}</li>`).join('')}
+                          </ul>
+                      </div>`;
+              } else {
+                  console.warn('Received invalid plot analysis:', analysis);
+                  vlm_feedbackContent += `
+                      <div class="plot-analysis">
+                          <p>Invalid plot analysis data received</p>
+                      </div>`;
+              }
+          });
+      }
+
+      // Add actionable insights if available
+      if (vlm_feedback_summary && typeof vlm_feedback_summary === 'string') {
+          vlm_feedbackContent += `
+              <div class="vlm_feedback">
+                  <h3>VLM Feedback Summary:</h3>
+                  <p>${vlm_feedback_summary}</p>
+              </div>`;
+      }
+
+      console.log("Datasets successfully tested:", datasets_successfully_tested);
+      if (datasets_successfully_tested && datasets_successfully_tested.length > 0) {
+          vlm_feedbackContent += `
+              <div id="datasets_successfully_tested">
+                  <h3>Datasets Successfully Tested:</h3>
+                  <p>${datasets_successfully_tested.join(', ')}</p>
+              </div>`;
+      }
+
+      if (!vlm_feedbackContent) {
+          vlm_feedbackContent = '<p>No insights available for this experiment.</p>';
+      }
+
+      vlm_feedbackElm.innerHTML = vlm_feedbackContent;
+  }
+
+  const datasets_successfully_testedElm = document.getElementById("datasets_successfully_tested");
+  if (datasets_successfully_testedElm) {
+      let datasets_successfully_testedContent = '';
+      if (datasets_successfully_tested && datasets_successfully_tested.length > 0) {
+          datasets_successfully_testedContent = `<h3>Datasets Successfully Tested:</h3><ul>`;
+          datasets_successfully_tested.forEach(dataset => {
+              datasets_successfully_testedContent += `<li>${dataset}</li>`;
+          });
+          datasets_successfully_testedContent += `</ul>`;
+      } else {
+          datasets_successfully_testedContent = '<p>No datasets tested yet</p>';
+      }
+      datasets_successfully_testedElm.innerHTML = datasets_successfully_testedContent;
+  }
+};
+
+// Initialize with the provided tree data
+const treeStructData = {"edges": [[0, 2], [0, 1], [2, 3]], "layout": [[0.5, 0.0], [0.0, 0.5], [1.0, 0.5], [1.0, 1.0]], "plan": ["We will create a simple scenario simulation to enhance decision-making using a\nsynthetic dataset. We'll generate data representing states and actions along\nwith their corresponding rewards. The model will be a basic neural network that\nestimates the future outcomes based on current states and actions. We will\nevaluate the model using the Scenario Outcome Robustness Score (SORS) by\nsimulating various future scenarios and calculating how well the chosen actions\nalign with long-term goals. The implementation will include data preparation,\ntraining the neural network, evaluating SORS, and saving the results.", "Hyperparam tuning name: learning rate. To implement hyperparameter tuning for\nthe learning rate, I will create a list of potential learning rate values to\niterate through during the training process. For each learning rate, I will\ninitialize the model and optimizer, train the model for a fixed number of\nepochs, and collect metrics and losses for both the training and validation\nsets. The results of each configuration will be stored in a structured\ndictionary, which is finally saved as a single `.npy` file.", "Hyperparam tuning name: batch size. To implement hyperparameter tuning for batch\nsize, I will modify the training loop to iterate over a list of predefined batch\nsizes. For each batch size, I will split the training data into batches, train\nthe model on each batch, and collect the training and validation metrics for\neach size. After completing the training for all batch sizes, I will save the\nresults in the specified structured format.", "Seed node"], "code": ["import os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom sklearn.model_selection import train_test_split\n\n# Set working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Synthetic dataset generation\nnp.random.seed(42)\nstate_space = np.random.rand(1000, 10)  # 1000 samples, 10 features\nactions = np.random.randint(0, 2, size=(1000, 1))  # Binary actions\nrewards = actions * np.sum(state_space, axis=1, keepdims=True) + np.random.normal(\n    0, 0.1, (1000, 1)\n)  # Reward function with noise\n\n# Train-test split\nX_train, X_val, y_train, y_val = train_test_split(\n    state_space, rewards, test_size=0.2, random_state=42\n)\n\n# Device configuration\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n\n# Define the simple neural network\nclass SimpleNN(nn.Module):\n    def __init__(self):\n        super(SimpleNN, self).__init__()\n        self.fc1 = nn.Linear(10, 32)\n        self.fc2 = nn.Linear(32, 1)\n\n    def forward(self, x):\n        x = torch.relu(self.fc1(x))\n        x = self.fc2(x)\n        return x\n\n\n# Model initialization and optimizer\nmodel = SimpleNN().to(device)\noptimizer = optim.Adam(model.parameters(), lr=0.001)\ncriterion = nn.MSELoss()\n\n# Prepare data tensors\nX_train_tensor = torch.tensor(X_train, dtype=torch.float32).to(device)\ny_train_tensor = torch.tensor(y_train, dtype=torch.float32).to(device)\nX_val_tensor = torch.tensor(X_val, dtype=torch.float32).to(device)\ny_val_tensor = torch.tensor(y_val, dtype=torch.float32).to(device)\n\n# Experiment data dictionary\nexperiment_data = {\n    \"synthetic_dataset\": {\n        \"metrics\": {\"train\": [], \"val\": []},\n        \"losses\": {\"train\": [], \"val\": []},\n        \"predictions\": [],\n        \"ground_truth\": [],\n    },\n}\n\n# Training loop\nn_epochs = 50\nfor epoch in range(n_epochs):\n    model.train()\n    optimizer.zero_grad()\n    outputs = model(X_train_tensor)\n    loss = criterion(outputs, y_train_tensor)\n    loss.backward()\n    optimizer.step()\n\n    # Validation\n    model.eval()\n    with torch.no_grad():\n        val_outputs = model(X_val_tensor)\n        val_loss = criterion(val_outputs, y_val_tensor)\n\n        # Calculate SORS\n        sors = torch.mean(\n            torch.abs(val_outputs - y_val_tensor)\n        ).item()  # this is a simple version of SORS\n\n    # Store metrics\n    experiment_data[\"synthetic_dataset\"][\"losses\"][\"train\"].append(loss.item())\n    experiment_data[\"synthetic_dataset\"][\"losses\"][\"val\"].append(val_loss.item())\n    experiment_data[\"synthetic_dataset\"][\"metrics\"][\"train\"].append(sors)\n    experiment_data[\"synthetic_dataset\"][\"metrics\"][\"val\"].append(sors)\n\n    print(\n        f\"Epoch {epoch + 1}/{n_epochs}, Train Loss: {loss.item():.4f}, Val Loss: {val_loss:.4f}, SORS: {sors:.4f}\"\n    )\n\n# Save experiment data\nnp.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\n", "import os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom sklearn.model_selection import train_test_split\n\n# Set working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Synthetic dataset generation\nnp.random.seed(42)\nstate_space = np.random.rand(1000, 10)  # 1000 samples, 10 features\nactions = np.random.randint(0, 2, size=(1000, 1))  # Binary actions\nrewards = actions * np.sum(state_space, axis=1, keepdims=True) + np.random.normal(\n    0, 0.1, (1000, 1)\n)  # Reward function with noise\n\n# Train-test split\nX_train, X_val, y_train, y_val = train_test_split(\n    state_space, rewards, test_size=0.2, random_state=42\n)\n\n# Device configuration\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n\n# Define the simple neural network\nclass SimpleNN(nn.Module):\n    def __init__(self):\n        super(SimpleNN, self).__init__()\n        self.fc1 = nn.Linear(10, 32)\n        self.fc2 = nn.Linear(32, 1)\n\n    def forward(self, x):\n        x = torch.relu(self.fc1(x))\n        x = self.fc2(x)\n        return x\n\n\n# Hyperparameter tuning for learning rate\nlearning_rates = [0.001, 0.01, 0.1]  # Different learning rates to test\nexperiment_data = {\"hyperparam_tuning_learning_rate\": {}}\n\nn_epochs = 50\n\nfor lr in learning_rates:\n    print(f\"Training with learning rate: {lr}\")\n\n    # Model initialization and optimizer\n    model = SimpleNN().to(device)\n    optimizer = optim.Adam(model.parameters(), lr=lr)\n    criterion = nn.MSELoss()\n\n    # Prepare data tensors\n    X_train_tensor = torch.tensor(X_train, dtype=torch.float32).to(device)\n    y_train_tensor = torch.tensor(y_train, dtype=torch.float32).to(device)\n    X_val_tensor = torch.tensor(X_val, dtype=torch.float32).to(device)\n    y_val_tensor = torch.tensor(y_val, dtype=torch.float32).to(device)\n\n    # Initialize data storage for this learning rate\n    experiment_data[\"hyperparam_tuning_learning_rate\"][f\"lr_{lr}\"] = {\n        \"metrics\": {\"train\": [], \"val\": []},\n        \"losses\": {\"train\": [], \"val\": []},\n        \"predictions\": [],\n        \"ground_truth\": [],\n    }\n\n    # Training loop\n    for epoch in range(n_epochs):\n        model.train()\n        optimizer.zero_grad()\n        outputs = model(X_train_tensor)\n        loss = criterion(outputs, y_train_tensor)\n        loss.backward()\n        optimizer.step()\n\n        # Validation\n        model.eval()\n        with torch.no_grad():\n            val_outputs = model(X_val_tensor)\n            val_loss = criterion(val_outputs, y_val_tensor)\n\n            # Calculate SORS\n            sors = torch.mean(\n                torch.abs(val_outputs - y_val_tensor)\n            ).item()  # this is a simple version of SORS\n\n        # Store metrics\n        experiment_data[\"hyperparam_tuning_learning_rate\"][f\"lr_{lr}\"][\"losses\"][\n            \"train\"\n        ].append(loss.item())\n        experiment_data[\"hyperparam_tuning_learning_rate\"][f\"lr_{lr}\"][\"losses\"][\n            \"val\"\n        ].append(val_loss.item())\n        experiment_data[\"hyperparam_tuning_learning_rate\"][f\"lr_{lr}\"][\"metrics\"][\n            \"train\"\n        ].append(sors)\n        experiment_data[\"hyperparam_tuning_learning_rate\"][f\"lr_{lr}\"][\"metrics\"][\n            \"val\"\n        ].append(sors)\n\n        print(\n            f\"Epoch {epoch + 1}/{n_epochs}, Train Loss: {loss.item():.4f}, Val Loss: {val_loss:.4f}, SORS: {sors:.4f}\"\n        )\n\n# Save experiment data\nnp.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\n", "import os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom sklearn.model_selection import train_test_split\n\n# Set working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Synthetic dataset generation\nnp.random.seed(42)\nstate_space = np.random.rand(1000, 10)  # 1000 samples, 10 features\nactions = np.random.randint(0, 2, size=(1000, 1))  # Binary actions\nrewards = actions * np.sum(state_space, axis=1, keepdims=True) + np.random.normal(\n    0, 0.1, (1000, 1)\n)  # Reward function with noise\n\n# Train-test split\nX_train, X_val, y_train, y_val = train_test_split(\n    state_space, rewards, test_size=0.2, random_state=42\n)\n\n# Device configuration\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n\n# Define the simple neural network\nclass SimpleNN(nn.Module):\n    def __init__(self):\n        super(SimpleNN, self).__init__()\n        self.fc1 = nn.Linear(10, 32)\n        self.fc2 = nn.Linear(32, 1)\n\n    def forward(self, x):\n        x = torch.relu(self.fc1(x))\n        x = self.fc2(x)\n        return x\n\n\n# Prepare data tensors\nX_train_tensor = torch.tensor(X_train, dtype=torch.float32).to(device)\ny_train_tensor = torch.tensor(y_train, dtype=torch.float32).to(device)\nX_val_tensor = torch.tensor(X_val, dtype=torch.float32).to(device)\ny_val_tensor = torch.tensor(y_val, dtype=torch.float32).to(device)\n\n# Experiment data dictionary\nexperiment_data = {\n    \"hyperparam_tuning_batch_size\": {\n        \"synthetic_dataset\": {\n            \"metrics\": {\"train\": [], \"val\": []},\n            \"losses\": {\"train\": [], \"val\": []},\n            \"predictions\": [],\n            \"ground_truth\": [],\n        },\n    },\n}\n\n# Hyperparameter tuning: batch sizes to experiment with\nbatch_sizes = [16, 32, 64, 128, 256]\nn_epochs = 50\n\nfor batch_size in batch_sizes:\n    print(f\"Training with batch size: {batch_size}\")\n\n    # Initialize model and optimizer for each batch size\n    model = SimpleNN().to(device)\n    optimizer = optim.Adam(model.parameters(), lr=0.001)\n    criterion = nn.MSELoss()\n\n    for epoch in range(n_epochs):\n        model.train()\n\n        # Mini-batch training\n        for i in range(0, len(X_train_tensor), batch_size):\n            X_batch = X_train_tensor[i : i + batch_size]\n            y_batch = y_train_tensor[i : i + batch_size]\n            optimizer.zero_grad()\n            outputs = model(X_batch)\n            loss = criterion(outputs, y_batch)\n            loss.backward()\n            optimizer.step()\n\n        # Validation\n        model.eval()\n        with torch.no_grad():\n            val_outputs = model(X_val_tensor)\n            val_loss = criterion(val_outputs, y_val_tensor)\n\n            # Calculate SORS\n            sors = torch.mean(\n                torch.abs(val_outputs - y_val_tensor)\n            ).item()  # this is a simple version of SORS\n\n        # Store metrics\n        experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\"losses\"][\n            \"train\"\n        ].append(loss.item())\n        experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\"losses\"][\n            \"val\"\n        ].append(val_loss.item())\n        experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\"metrics\"][\n            \"train\"\n        ].append(sors)\n        experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\"metrics\"][\n            \"val\"\n        ].append(sors)\n\n        print(\n            f\"Epoch {epoch + 1}/{n_epochs}, Train Loss: {loss.item():.4f}, Val Loss: {val_loss:.4f}, SORS: {sors:.4f}\"\n        )\n\n# Save experiment data\nnp.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\n", "# Set random seed\nimport random\nimport numpy as np\nimport torch\n\nseed = 0\nrandom.seed(seed)\nnp.random.seed(seed)\ntorch.manual_seed(seed)\nif torch.cuda.is_available():\n    torch.cuda.manual_seed(seed)\n\nimport os\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.optim as optim\nfrom sklearn.model_selection import train_test_split\n\n# Set working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\n# Synthetic dataset generation\nnp.random.seed(42)\nstate_space = np.random.rand(1000, 10)  # 1000 samples, 10 features\nactions = np.random.randint(0, 2, size=(1000, 1))  # Binary actions\nrewards = actions * np.sum(state_space, axis=1, keepdims=True) + np.random.normal(\n    0, 0.1, (1000, 1)\n)  # Reward function with noise\n\n# Train-test split\nX_train, X_val, y_train, y_val = train_test_split(\n    state_space, rewards, test_size=0.2, random_state=42\n)\n\n# Device configuration\ndevice = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\nprint(f\"Using device: {device}\")\n\n\n# Define the simple neural network\nclass SimpleNN(nn.Module):\n    def __init__(self):\n        super(SimpleNN, self).__init__()\n        self.fc1 = nn.Linear(10, 32)\n        self.fc2 = nn.Linear(32, 1)\n\n    def forward(self, x):\n        x = torch.relu(self.fc1(x))\n        x = self.fc2(x)\n        return x\n\n\n# Prepare data tensors\nX_train_tensor = torch.tensor(X_train, dtype=torch.float32).to(device)\ny_train_tensor = torch.tensor(y_train, dtype=torch.float32).to(device)\nX_val_tensor = torch.tensor(X_val, dtype=torch.float32).to(device)\ny_val_tensor = torch.tensor(y_val, dtype=torch.float32).to(device)\n\n# Experiment data dictionary\nexperiment_data = {\n    \"hyperparam_tuning_batch_size\": {\n        \"synthetic_dataset\": {\n            \"metrics\": {\"train\": [], \"val\": []},\n            \"losses\": {\"train\": [], \"val\": []},\n            \"predictions\": [],\n            \"ground_truth\": [],\n        },\n    },\n}\n\n# Hyperparameter tuning: batch sizes to experiment with\nbatch_sizes = [16, 32, 64, 128, 256]\nn_epochs = 50\n\nfor batch_size in batch_sizes:\n    print(f\"Training with batch size: {batch_size}\")\n\n    # Initialize model and optimizer for each batch size\n    model = SimpleNN().to(device)\n    optimizer = optim.Adam(model.parameters(), lr=0.001)\n    criterion = nn.MSELoss()\n\n    for epoch in range(n_epochs):\n        model.train()\n\n        # Mini-batch training\n        for i in range(0, len(X_train_tensor), batch_size):\n            X_batch = X_train_tensor[i : i + batch_size]\n            y_batch = y_train_tensor[i : i + batch_size]\n            optimizer.zero_grad()\n            outputs = model(X_batch)\n            loss = criterion(outputs, y_batch)\n            loss.backward()\n            optimizer.step()\n\n        # Validation\n        model.eval()\n        with torch.no_grad():\n            val_outputs = model(X_val_tensor)\n            val_loss = criterion(val_outputs, y_val_tensor)\n\n            # Calculate SORS\n            sors = torch.mean(\n                torch.abs(val_outputs - y_val_tensor)\n            ).item()  # this is a simple version of SORS\n\n        # Store metrics\n        experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\"losses\"][\n            \"train\"\n        ].append(loss.item())\n        experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\"losses\"][\n            \"val\"\n        ].append(val_loss.item())\n        experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\"metrics\"][\n            \"train\"\n        ].append(sors)\n        experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\"metrics\"][\n            \"val\"\n        ].append(sors)\n\n        print(\n            f\"Epoch {epoch + 1}/{n_epochs}, Train Loss: {loss.item():.4f}, Val Loss: {val_loss:.4f}, SORS: {sors:.4f}\"\n        )\n\n# Save experiment data\nnp.save(os.path.join(working_dir, \"experiment_data.npy\"), experiment_data)\n"], "term_out": ["['Using device: cuda', '\\n', 'Epoch 1/50, Train Loss: 13.5075, Val Loss:\n12.8217, SORS: 2.5408', '\\n', 'Epoch 2/50, Train Loss: 13.4148, Val Loss:\n12.7335, SORS: 2.5307', '\\n', 'Epoch 3/50, Train Loss: 13.3221, Val Loss:\n12.6453, SORS: 2.5219', '\\n', 'Epoch 4/50, Train Loss: 13.2293, Val Loss:\n12.5570, SORS: 2.5143', '\\n', 'Epoch 5/50, Train Loss: 13.1365, Val Loss:\n12.4686, SORS: 2.5078', '\\n', 'Epoch 6/50, Train Loss: 13.0437, Val Loss:\n12.3801, SORS: 2.5027', '\\n', 'Epoch 7/50, Train Loss: 12.9510, Val Loss:\n12.2916, SORS: 2.4982', '\\n', 'Epoch 8/50, Train Loss: 12.8582, Val Loss:\n12.2031, SORS: 2.4939', '\\n', 'Epoch 9/50, Train Loss: 12.7653, Val Loss:\n12.1144, SORS: 2.4897', '\\n', 'Epoch 10/50, Train Loss: 12.6723, Val Loss:\n12.0256, SORS: 2.4862', '\\n', 'Epoch 11/50, Train Loss: 12.5793, Val Loss:\n11.9368, SORS: 2.4836', '\\n', 'Epoch 12/50, Train Loss: 12.4862, Val Loss:\n11.8479, SORS: 2.4816', '\\n', 'Epoch 13/50, Train Loss: 12.3929, Val Loss:\n11.7588, SORS: 2.4801', '\\n', 'Epoch 14/50, Train Loss: 12.2996, Val Loss:\n11.6696, SORS: 2.4793', '\\n', 'Epoch 15/50, Train Loss: 12.2061, Val Loss:\n11.5802, SORS: 2.4785', '\\n', 'Epoch 16/50, Train Loss: 12.1125, Val Loss:\n11.4906, SORS: 2.4779', '\\n', 'Epoch 17/50, Train Loss: 12.0187, Val Loss:\n11.4011, SORS: 2.4775', '\\n', 'Epoch 18/50, Train Loss: 11.9247, Val Loss:\n11.3112, SORS: 2.4770', '\\n', 'Epoch 19/50, Train Loss: 11.8304, Val Loss:\n11.2211, SORS: 2.4766', '\\n', 'Epoch 20/50, Train Loss: 11.7360, Val Loss:\n11.1308, SORS: 2.4762', '\\n', 'Epoch 21/50, Train Loss: 11.6414, Val Loss:\n11.0405, SORS: 2.4759', '\\n', 'Epoch 22/50, Train Loss: 11.5466, Val Loss:\n10.9501, SORS: 2.4755', '\\n', 'Epoch 23/50, Train Loss: 11.4517, Val Loss:\n10.8597, SORS: 2.4752', '\\n', 'Epoch 24/50, Train Loss: 11.3567, Val Loss:\n10.7692, SORS: 2.4749', '\\n', 'Epoch 25/50, Train Loss: 11.2616, Val Loss:\n10.6784, SORS: 2.4745', '\\n', 'Epoch 26/50, Train Loss: 11.1663, Val Loss:\n10.5876, SORS: 2.4742', '\\n', 'Epoch 27/50, Train Loss: 11.0709, Val Loss:\n10.4966, SORS: 2.4739', '\\n', 'Epoch 28/50, Train Loss: 10.9754, Val Loss:\n10.4054, SORS: 2.4735', '\\n', 'Epoch 29/50, Train Loss: 10.8797, Val Loss:\n10.3140, SORS: 2.4732', '\\n', 'Epoch 30/50, Train Loss: 10.7840, Val Loss:\n10.2224, SORS: 2.4728', '\\n', 'Epoch 31/50, Train Loss: 10.6883, Val Loss:\n10.1308, SORS: 2.4724', '\\n', 'Epoch 32/50, Train Loss: 10.5925, Val Loss:\n10.0392, SORS: 2.4720', '\\n', 'Epoch 33/50, Train Loss: 10.4967, Val Loss:\n9.9478, SORS: 2.4717', '\\n', 'Epoch 34/50, Train Loss: 10.4009, Val Loss:\n9.8568, SORS: 2.4714', '\\n', 'Epoch 35/50, Train Loss: 10.3051, Val Loss:\n9.7660, SORS: 2.4710', '\\n', 'Epoch 36/50, Train Loss: 10.2092, Val Loss:\n9.6752, SORS: 2.4707', '\\n', 'Epoch 37/50, Train Loss: 10.1134, Val Loss:\n9.5847, SORS: 2.4704', '\\n', 'Epoch 38/50, Train Loss: 10.0177, Val Loss:\n9.4943, SORS: 2.4701', '\\n', 'Epoch 39/50, Train Loss: 9.9221, Val Loss: 9.4041,\nSORS: 2.4698', '\\n', 'Epoch 40/50, Train Loss: 9.8267, Val Loss: 9.3143, SORS:\n2.4696', '\\n', 'Epoch 41/50, Train Loss: 9.7314, Val Loss: 9.2248, SORS:\n2.4693', '\\n', 'Epoch 42/50, Train Loss: 9.6364, Val Loss: 9.1357, SORS:\n2.4690', '\\n', 'Epoch 43/50, Train Loss: 9.5416, Val Loss: 9.0469, SORS:\n2.4688', '\\n', 'Epoch 44/50, Train Loss: 9.4471, Val Loss: 8.9584, SORS:\n2.4685', '\\n', 'Epoch 45/50, Train Loss: 9.3529, Val Loss: 8.8699, SORS:\n2.4682', '\\n', 'Epoch 46/50, Train Loss: 9.2591, Val Loss: 8.7821, SORS:\n2.4679', '\\n', 'Epoch 47/50, Train Loss: 9.1657, Val Loss: 8.6949, SORS:\n2.4676', '\\n', 'Epoch 48/50, Train Loss: 9.0729, Val Loss: 8.6079, SORS:\n2.4673', '\\n', 'Epoch 49/50, Train Loss: 8.9807, Val Loss: 8.5217, SORS:\n2.4670', '\\n', 'Epoch 50/50, Train Loss: 8.8891, Val Loss: 8.4361, SORS:\n2.4667', '\\n', 'Execution time: 2 seconds seconds (time limit is 10 minutes).']", "['Using device: cuda', '\\n', 'Training with learning rate: 0.001', '\\n', 'Epoch\n1/50, Train Loss: 13.5075, Val Loss: 12.8217, SORS: 2.5408', '\\n', 'Epoch 2/50,\nTrain Loss: 13.4148, Val Loss: 12.7335, SORS: 2.5307', '\\n', 'Epoch 3/50, Train\nLoss: 13.3221, Val Loss: 12.6453, SORS: 2.5219', '\\n', 'Epoch 4/50, Train Loss:\n13.2293, Val Loss: 12.5570, SORS: 2.5143', '\\n', 'Epoch 5/50, Train Loss:\n13.1365, Val Loss: 12.4686, SORS: 2.5078', '\\n', 'Epoch 6/50, Train Loss:\n13.0437, Val Loss: 12.3801, SORS: 2.5027', '\\n', 'Epoch 7/50, Train Loss:\n12.9510, Val Loss: 12.2916, SORS: 2.4982', '\\n', 'Epoch 8/50, Train Loss:\n12.8582, Val Loss: 12.2031, SORS: 2.4939', '\\n', 'Epoch 9/50, Train Loss:\n12.7653, Val Loss: 12.1144, SORS: 2.4897', '\\n', 'Epoch 10/50, Train Loss:\n12.6723, Val Loss: 12.0256, SORS: 2.4862', '\\n', 'Epoch 11/50, Train Loss:\n12.5793, Val Loss: 11.9368, SORS: 2.4836', '\\n', 'Epoch 12/50, Train Loss:\n12.4862, Val Loss: 11.8479, SORS: 2.4816', '\\n', 'Epoch 13/50, Train Loss:\n12.3929, Val Loss: 11.7588, SORS: 2.4801', '\\n', 'Epoch 14/50, Train Loss:\n12.2996, Val Loss: 11.6696, SORS: 2.4793', '\\n', 'Epoch 15/50, Train Loss:\n12.2061, Val Loss: 11.5802, SORS: 2.4785', '\\n', 'Epoch 16/50, Train Loss:\n12.1125, Val Loss: 11.4906, SORS: 2.4779', '\\n', 'Epoch 17/50, Train Loss:\n12.0187, Val Loss: 11.4011, SORS: 2.4775', '\\n', 'Epoch 18/50, Train Loss:\n11.9247, Val Loss: 11.3112, SORS: 2.4770', '\\n', 'Epoch 19/50, Train Loss:\n11.8304, Val Loss: 11.2211, SORS: 2.4766', '\\n', 'Epoch 20/50, Train Loss:\n11.7360, Val Loss: 11.1308, SORS: 2.4762', '\\n', 'Epoch 21/50, Train Loss:\n11.6414, Val Loss: 11.0405, SORS: 2.4759', '\\n', 'Epoch 22/50, Train Loss:\n11.5466, Val Loss: 10.9501, SORS: 2.4755', '\\n', 'Epoch 23/50, Train Loss:\n11.4517, Val Loss: 10.8597, SORS: 2.4752', '\\n', 'Epoch 24/50, Train Loss:\n11.3567, Val Loss: 10.7692, SORS: 2.4749', '\\n', 'Epoch 25/50, Train Loss:\n11.2616, Val Loss: 10.6784, SORS: 2.4745', '\\n', 'Epoch 26/50, Train Loss:\n11.1663, Val Loss: 10.5876, SORS: 2.4742', '\\n', 'Epoch 27/50, Train Loss:\n11.0709, Val Loss: 10.4966, SORS: 2.4739', '\\n', 'Epoch 28/50, Train Loss:\n10.9754, Val Loss: 10.4054, SORS: 2.4735', '\\n', 'Epoch 29/50, Train Loss:\n10.8797, Val Loss: 10.3140, SORS: 2.4732', '\\n', 'Epoch 30/50, Train Loss:\n10.7840, Val Loss: 10.2224, SORS: 2.4728', '\\n', 'Epoch 31/50, Train Loss:\n10.6883, Val Loss: 10.1308, SORS: 2.4724', '\\n', 'Epoch 32/50, Train Loss:\n10.5925, Val Loss: 10.0392, SORS: 2.4720', '\\n', 'Epoch 33/50, Train Loss:\n10.4967, Val Loss: 9.9478, SORS: 2.4717', '\\n', 'Epoch 34/50, Train Loss:\n10.4009, Val Loss: 9.8568, SORS: 2.4714', '\\n', 'Epoch 35/50, Train Loss:\n10.3051, Val Loss: 9.7660, SORS: 2.4710', '\\n', 'Epoch 36/50, Train Loss:\n10.2092, Val Loss: 9.6752, SORS: 2.4707', '\\n', 'Epoch 37/50, Train Loss:\n10.1134, Val Loss: 9.5847, SORS: 2.4704', '\\n', 'Epoch 38/50, Train Loss:\n10.0177, Val Loss: 9.4943, SORS: 2.4701', '\\n', 'Epoch 39/50, Train Loss:\n9.9221, Val Loss: 9.4041, SORS: 2.4698', '\\n', 'Epoch 40/50, Train Loss: 9.8267,\nVal Loss: 9.3143, SORS: 2.4696', '\\n', 'Epoch 41/50, Train Loss: 9.7314, Val\nLoss: 9.2248, SORS: 2.4693', '\\n', 'Epoch 42/50, Train Loss: 9.6364, Val Loss:\n9.1357, SORS: 2.4690', '\\n', 'Epoch 43/50, Train Loss: 9.5416, Val Loss: 9.0469,\nSORS: 2.4688', '\\n', 'Epoch 44/50, Train Loss: 9.4471, Val Loss: 8.9584, SORS:\n2.4685', '\\n', 'Epoch 45/50, Train Loss: 9.3529, Val Loss: 8.8699, SORS:\n2.4682', '\\n', 'Epoch 46/50, Train Loss: 9.2591, Val Loss: 8.7821, SORS:\n2.4679', '\\n', 'Epoch 47/50, Train Loss: 9.1657, Val Loss: 8.6949, SORS:\n2.4676', '\\n', 'Epoch 48/50, Train Loss: 9.0729, Val Loss: 8.6079, SORS:\n2.4673', '\\n', 'Epoch 49/50, Train Loss: 8.9807, Val Loss: 8.5217, SORS:\n2.4670', '\\n', 'Epoch 50/50, Train Loss: 8.8891, Val Loss: 8.4361, SORS:\n2.4667', '\\n', 'Training with learning rate: 0.01', '\\n', 'Epoch 1/50, Train\nLoss: 12.6160, Val Loss: 11.2425, SORS: 2.4802', '\\n', 'Epoch 2/50, Train Loss:\n11.7262, Val Loss: 10.4436, SORS: 2.4773', '\\n', 'Epoch 3/50, Train Loss:\n10.8877, Val Loss: 9.6906, SORS: 2.4748', '\\n', 'Epoch 4/50, Train Loss:\n10.0931, Val Loss: 8.9767, SORS: 2.4718', '\\n', 'Epoch 5/50, Train Loss: 9.3435,\nVal Loss: 8.3081, SORS: 2.4685', '\\n', 'Epoch 6/50, Train Loss: 8.6392, Val\nLoss: 7.6944, SORS: 2.4647', '\\n', 'Epoch 7/50, Train Loss: 7.9940, Val Loss:\n7.1537, SORS: 2.4607', '\\n', 'Epoch 8/50, Train Loss: 7.4232, Val Loss: 6.7094,\nSORS: 2.4567', '\\n', 'Epoch 9/50, Train Loss: 6.9490, Val Loss: 6.3888, SORS:\n2.4525', '\\n', 'Epoch 10/50, Train Loss: 6.6003, Val Loss: 6.2178, SORS:\n2.4483', '\\n', 'Epoch 11/50, Train Loss: 6.4040, Val Loss: 6.2111, SORS:\n2.4441', '\\n', 'Epoch 12/50, Train Loss: 6.3756, Val Loss: 6.3512, SORS:\n2.4405', '\\n', 'Epoch 13/50, Train Loss: 6.4978, Val Loss: 6.5661, SORS:\n2.4377', '\\n', 'Epoch 14/50, Train Loss: 6.7005, Val Loss: 6.7581, SORS:\n2.4358', '\\n', 'Epoch 15/50, Train Loss: 6.8852, Val Loss: 6.8608, SORS:\n2.4348', '\\n', 'Epoch 16/50, Train Loss: 6.9844, Val Loss: 6.8595, SORS:\n2.4348', '\\n', 'Epoch 17/50, Train Loss: 6.9822, Val Loss: 6.7751, SORS:\n2.4354', '\\n', 'Epoch 18/50, Train Loss: 6.8993, Val Loss: 6.6441, SORS:\n2.4366', '\\n', 'Epoch 19/50, Train Loss: 6.7712, Val Loss: 6.5019, SORS:\n2.4383', '\\n', 'Epoch 20/50, Train Loss: 6.6333, Val Loss: 6.3749, SORS:\n2.4402', '\\n', 'Epoch 21/50, Train Loss: 6.5122, Val Loss: 6.2790, SORS:\n2.4420', '\\n', 'Epoch 22/50, Train Loss: 6.4233, Val Loss: 6.2202, SORS:\n2.4439', '\\n', 'Epoch 23/50, Train Loss: 6.3717, Val Loss: 6.1951, SORS:\n2.4455', '\\n', 'Epoch 24/50, Train Loss: 6.3544, Val Loss: 6.1958, SORS:\n2.4469', '\\n', 'Epoch 25/50, Train Loss: 6.3630, Val Loss: 6.2131, SORS:\n2.4480', '\\n', 'Epoch 26/50, Train Loss: 6.3872, Val Loss: 6.2375, SORS:\n2.4488', '\\n', 'Epoch 27/50, Train Loss: 6.4172, Val Loss: 6.2612, SORS:\n2.4494', '\\n', 'Epoch 28/50, Train Loss: 6.4452, Val Loss: 6.2790, SORS:\n2.4497', '\\n', 'Epoch 29/50, Train Loss: 6.4657, Val Loss: 6.2880, SORS:\n2.4497', '\\n', 'Epoch 30/50, Train Loss: 6.4758, Val Loss: 6.2872, SORS:\n2.4496', '\\n', 'Epoch 31/50, Train Loss: 6.4747, Val Loss: 6.2776, SORS:\n2.4492', '\\n', 'Epoch 32/50, Train Loss: 6.4632, Val Loss: 6.2613, SORS:\n2.4487', '\\n', 'Epoch 33/50, Train Loss: 6.4438, Val Loss: 6.2413, SORS:\n2.4480', '\\n', 'Epoch 34/50, Train Loss: 6.4196, Val Loss: 6.2207, SORS:\n2.4472', '\\n', 'Epoch 35/50, Train Loss: 6.3941, Val Loss: 6.2027, SORS:\n2.4463', '\\n', 'Epoch 36/50, Train Loss: 6.3707, Val Loss: 6.1896, SORS:\n2.4454', '\\n', 'Epoch 37/50, Train Loss: 6.3518, Val Loss: 6.1828, SORS:\n2.4444', '\\n', 'Epoch 38/50, Train Loss: 6.3394, Val Loss: 6.1826, SORS:\n2.4434', '\\n', 'Epoch 39/50, Train Loss: 6.3339, Val Loss: 6.1881, SORS:\n2.4425', '\\n', 'Epoch 40/50, Train Loss: 6.3345, Val Loss: 6.1973, SORS:\n2.4416', '\\n', 'Epoch 41/50, Train Loss: 6.3394, Val Loss: 6.2077, SORS:\n2.4409', '\\n', 'Epoch 42/50, Train Loss: 6.3463, Val Loss: 6.2168, SORS:\n2.4403', '\\n', 'Epoch 43/50, Train Loss: 6.3526, Val Loss: 6.2224, SORS:\n2.4398', '\\n', 'Epoch 44/50, Train Loss: 6.3564, Val Loss: 6.2235, SORS:\n2.4395', '\\n', 'Epoch 45/50, Train Loss: 6.3565, Val Loss: 6.2201, SORS:\n2.4394', '\\n', 'Epoch 46/50, Train Loss: 6.3529, Val Loss: 6.2129, SORS:\n2.4394', '\\n', 'Epoch 47/50, Train Loss: 6.3463, Val Loss: 6.2035, SORS:\n2.4394', '\\n', 'Epoch 48/50, Train Loss: 6.3382, Val Loss: 6.1936, SORS:\n2.4396', '\\n', 'Epoch 49/50, Train Loss: 6.3300, Val Loss: 6.1843, SORS:\n2.4398', '\\n', 'Epoch 50/50, Train Loss: 6.3230, Val Loss: 6.1768, SORS:\n2.4400', '\\n', 'Training with learning rate: 0.1', '\\n', 'Epoch 1/50, Train\nLoss: 13.7167, Val Loss: 7.4348, SORS: 2.4663', '\\n', 'Epoch 2/50, Train Loss:\n7.6799, Val Loss: 8.2643, SORS: 2.4411', '\\n', 'Epoch 3/50, Train Loss: 8.3205,\nVal Loss: 7.0399, SORS: 2.4472', '\\n', 'Epoch 4/50, Train Loss: 7.0826, Val\nLoss: 6.2679, SORS: 2.4572', '\\n', 'Epoch 5/50, Train Loss: 6.3730, Val Loss:\n6.7056, SORS: 2.4633', '\\n', 'Epoch 6/50, Train Loss: 6.8881, Val Loss: 6.8794,\nSORS: 2.4650', '\\n', 'Epoch 7/50, Train Loss: 7.0824, Val Loss: 6.6286, SORS:\n2.4630', '\\n', 'Epoch 8/50, Train Loss: 6.8014, Val Loss: 6.3066, SORS: 2.4580',\n'\\n', 'Epoch 9/50, Train Loss: 6.4237, Val Loss: 6.3170, SORS: 2.4517', '\\n',\n'Epoch 10/50, Train Loss: 6.3739, Val Loss: 6.6455, SORS: 2.4463', '\\n', 'Epoch\n11/50, Train Loss: 6.6621, Val Loss: 6.7402, SORS: 2.4442', '\\n', 'Epoch 12/50,\nTrain Loss: 6.7476, Val Loss: 6.4766, SORS: 2.4456', '\\n', 'Epoch 13/50, Train\nLoss: 6.5043, Val Loss: 6.2557, SORS: 2.4487', '\\n', 'Epoch 14/50, Train Loss:\n6.3249, Val Loss: 6.2630, SORS: 2.4515', '\\n', 'Epoch 15/50, Train Loss: 6.3775,\nVal Loss: 6.3625, SORS: 2.4530', '\\n', 'Epoch 16/50, Train Loss: 6.5081, Val\nLoss: 6.3926, SORS: 2.4528', '\\n', 'Epoch 17/50, Train Loss: 6.5461, Val Loss:\n6.3225, SORS: 2.4508', '\\n', 'Epoch 18/50, Train Loss: 6.4611, Val Loss: 6.2346,\nSORS: 2.4473', '\\n', 'Epoch 19/50, Train Loss: 6.3415, Val Loss: 6.2365, SORS:\n2.4431', '\\n', 'Epoch 20/50, Train Loss: 6.3053, Val Loss: 6.3390, SORS:\n2.4392', '\\n', 'Epoch 21/50, Train Loss: 6.3763, Val Loss: 6.4149, SORS:\n2.4370', '\\n', 'Epoch 22/50, Train Loss: 6.4381, Val Loss: 6.3666, SORS:\n2.4368', '\\n', 'Epoch 23/50, Train Loss: 6.3968, Val Loss: 6.2611, SORS:\n2.4383', '\\n', 'Epoch 24/50, Train Loss: 6.3153, Val Loss: 6.2080, SORS:\n2.4404', '\\n', 'Epoch 25/50, Train Loss: 6.2932, Val Loss: 6.2209, SORS:\n2.4419', '\\n', 'Epoch 26/50, Train Loss: 6.3325, Val Loss: 6.2429, SORS:\n2.4423', '\\n', 'Epoch 27/50, Train Loss: 6.3676, Val Loss: 6.2334, SORS:\n2.4413', '\\n', 'Epoch 28/50, Train Loss: 6.3553, Val Loss: 6.2058, SORS:\n2.4391', '\\n', 'Epoch 29/50, Train Loss: 6.3107, Val Loss: 6.2025, SORS:\n2.4360', '\\n', 'Epoch 30/50, Train Loss: 6.2829, Val Loss: 6.2415, SORS:\n2.4331', '\\n', 'Epoch 31/50, Train Loss: 6.2983, Val Loss: 6.2830, SORS:\n2.4310', '\\n', 'Epoch 32/50, Train Loss: 6.3265, Val Loss: 6.2776, SORS:\n2.4304', '\\n', 'Epoch 33/50, Train Loss: 6.3224, Val Loss: 6.2332, SORS:\n2.4311', '\\n', 'Epoch 34/50, Train Loss: 6.2924, Val Loss: 6.1969, SORS:\n2.4324', '\\n', 'Epoch 35/50, Train Loss: 6.2770, Val Loss: 6.1899, SORS:\n2.4336', '\\n', 'Epoch 36/50, Train Loss: 6.2889, Val Loss: 6.1948, SORS:\n2.4339', '\\n', 'Epoch 37/50, Train Loss: 6.3042, Val Loss: 6.1923, SORS:\n2.4332', '\\n', 'Epoch 38/50, Train Loss: 6.3004, Val Loss: 6.1857, SORS:\n2.4316', '\\n', 'Epoch 39/50, Train Loss: 6.2824, Val Loss: 6.1926, SORS:\n2.4294', '\\n', 'Epoch 40/50, Train Loss: 6.2727, Val Loss: 6.2154, SORS:\n2.4274', '\\n', 'Epoch 41/50, Train Loss: 6.2806, Val Loss: 6.2319, SORS:\n2.4261', '\\n', 'Epoch 42/50, Train Loss: 6.2901, Val Loss: 6.2231, SORS:\n2.4259', '\\n', 'Epoch 43/50, Train Loss: 6.2847, Val Loss: 6.1992, SORS:\n2.4266', '\\n', 'Epoch 44/50, Train Loss: 6.2726, Val Loss: 6.1823, SORS:\n2.4275', '\\n', 'Epoch 45/50, Train Loss: 6.2703, Val Loss: 6.1779, SORS:\n2.4282', '\\n', 'Epoch 46/50, Train Loss: 6.2772, Val Loss: 6.1772, SORS:\n2.4281', '\\n', 'Epoch 47/50, Train Loss: 6.2801, Val Loss: 6.1755, SORS:\n2.4272', '\\n', 'Epoch 48/50, Train Loss: 6.2739, Val Loss: 6.1788, SORS:\n2.4257', '\\n', 'Epoch 49/50, Train Loss: 6.2673, Val Loss: 6.1904, SORS:\n2.4243', '\\n', 'Epoch 50/50, Train Loss: 6.2684, Val Loss: 6.2007, SORS:\n2.4233', '\\n', 'Execution time: 2 seconds seconds (time limit is 10 minutes).']", "['Using device: cuda', '\\n', 'Training with batch size: 16', '\\n', 'Epoch 1/50,\nTrain Loss: 9.9592, Val Loss: 8.7622, SORS: 2.4666', '\\n', 'Epoch 2/50, Train\nLoss: 7.0277, Val Loss: 6.3445, SORS: 2.4516', '\\n', 'Epoch 3/50, Train Loss:\n6.7200, Val Loss: 6.1832, SORS: 2.4465', '\\n', 'Epoch 4/50, Train Loss: 6.6892,\nVal Loss: 6.1759, SORS: 2.4451', '\\n', 'Epoch 5/50, Train Loss: 6.6577, Val\nLoss: 6.1693, SORS: 2.4437', '\\n', 'Epoch 6/50, Train Loss: 6.6252, Val Loss:\n6.1637, SORS: 2.4425', '\\n', 'Epoch 7/50, Train Loss: 6.5943, Val Loss: 6.1582,\nSORS: 2.4412', '\\n', 'Epoch 8/50, Train Loss: 6.5650, Val Loss: 6.1531, SORS:\n2.4400', '\\n', 'Epoch 9/50, Train Loss: 6.5368, Val Loss: 6.1482, SORS: 2.4387',\n'\\n', 'Epoch 10/50, Train Loss: 6.5090, Val Loss: 6.1436, SORS: 2.4375', '\\n',\n'Epoch 11/50, Train Loss: 6.4829, Val Loss: 6.1395, SORS: 2.4363', '\\n', 'Epoch\n12/50, Train Loss: 6.4575, Val Loss: 6.1358, SORS: 2.4352', '\\n', 'Epoch 13/50,\nTrain Loss: 6.4326, Val Loss: 6.1324, SORS: 2.4341', '\\n', 'Epoch 14/50, Train\nLoss: 6.4087, Val Loss: 6.1294, SORS: 2.4330', '\\n', 'Epoch 15/50, Train Loss:\n6.3862, Val Loss: 6.1265, SORS: 2.4320', '\\n', 'Epoch 16/50, Train Loss: 6.3635,\nVal Loss: 6.1242, SORS: 2.4311', '\\n', 'Epoch 17/50, Train Loss: 6.3417, Val\nLoss: 6.1218, SORS: 2.4301', '\\n', 'Epoch 18/50, Train Loss: 6.3206, Val Loss:\n6.1203, SORS: 2.4294', '\\n', 'Epoch 19/50, Train Loss: 6.2981, Val Loss: 6.1189,\nSORS: 2.4286', '\\n', 'Epoch 20/50, Train Loss: 6.2786, Val Loss: 6.1181, SORS:\n2.4279', '\\n', 'Epoch 21/50, Train Loss: 6.2578, Val Loss: 6.1169, SORS:\n2.4272', '\\n', 'Epoch 22/50, Train Loss: 6.2397, Val Loss: 6.1161, SORS:\n2.4266', '\\n', 'Epoch 23/50, Train Loss: 6.2199, Val Loss: 6.1152, SORS:\n2.4260', '\\n', 'Epoch 24/50, Train Loss: 6.2034, Val Loss: 6.1150, SORS:\n2.4255', '\\n', 'Epoch 25/50, Train Loss: 6.1860, Val Loss: 6.1154, SORS:\n2.4250', '\\n', 'Epoch 26/50, Train Loss: 6.1692, Val Loss: 6.1150, SORS:\n2.4246', '\\n', 'Epoch 27/50, Train Loss: 6.1513, Val Loss: 6.1153, SORS:\n2.4241', '\\n', 'Epoch 28/50, Train Loss: 6.1386, Val Loss: 6.1153, SORS:\n2.4237', '\\n', 'Epoch 29/50, Train Loss: 6.1208, Val Loss: 6.1147, SORS:\n2.4232', '\\n', 'Epoch 30/50, Train Loss: 6.1061, Val Loss: 6.1145, SORS:\n2.4228', '\\n', 'Epoch 31/50, Train Loss: 6.0913, Val Loss: 6.1151, SORS:\n2.4225', '\\n', 'Epoch 32/50, Train Loss: 6.0763, Val Loss: 6.1153, SORS:\n2.4222', '\\n', 'Epoch 33/50, Train Loss: 6.0599, Val Loss: 6.1152, SORS:\n2.4218', '\\n', 'Epoch 34/50, Train Loss: 6.0464, Val Loss: 6.1162, SORS:\n2.4216', '\\n', 'Epoch 35/50, Train Loss: 6.0345, Val Loss: 6.1149, SORS:\n2.4209', '\\n', 'Epoch 36/50, Train Loss: 6.0220, Val Loss: 6.1158, SORS:\n2.4207', '\\n', 'Epoch 37/50, Train Loss: 6.0093, Val Loss: 6.1169, SORS:\n2.4205', '\\n', 'Epoch 38/50, Train Loss: 5.9939, Val Loss: 6.1171, SORS:\n2.4202', '\\n', 'Epoch 39/50, Train Loss: 5.9770, Val Loss: 6.1192, SORS:\n2.4201', '\\n', 'Epoch 40/50, Train Loss: 5.9619, Val Loss: 6.1201, SORS:\n2.4200', '\\n', 'Epoch 41/50, Train Loss: 5.9463, Val Loss: 6.1204, SORS:\n2.4197', '\\n', 'Epoch 42/50, Train Loss: 5.9417, Val Loss: 6.1209, SORS:\n2.4195', '\\n', 'Epoch 43/50, Train Loss: 5.9276, Val Loss: 6.1212, SORS:\n2.4193', '\\n', 'Epoch 44/50, Train Loss: 5.9132, Val Loss: 6.1217, SORS:\n2.4190', '\\n', 'Epoch 45/50, Train Loss: 5.8990, Val Loss: 6.1211, SORS:\n2.4186', '\\n', 'Epoch 46/50, Train Loss: 5.8868, Val Loss: 6.1207, SORS:\n2.4184', '\\n', 'Epoch 47/50, Train Loss: 5.8734, Val Loss: 6.1208, SORS:\n2.4180', '\\n', 'Epoch 48/50, Train Loss: 5.8633, Val Loss: 6.1209, SORS:\n2.4178', '\\n', 'Epoch 49/50, Train Loss: 5.8518, Val Loss: 6.1207, SORS:\n2.4174', '\\n', 'Epoch 50/50, Train Loss: 5.8437, Val Loss: 6.1211, SORS:\n2.4173', '\\n', 'Training with batch size: 32', '\\n', 'Epoch 1/50, Train Loss:\n10.1707, Val Loss: 10.1217, SORS: 2.4759', '\\n', 'Epoch 2/50, Train Loss:\n8.5165, Val Loss: 8.3449, SORS: 2.4685', '\\n', 'Epoch 3/50, Train Loss: 7.2613,\nVal Loss: 6.9286, SORS: 2.4595', '\\n', 'Epoch 4/50, Train Loss: 6.7853, Val\nLoss: 6.2893, SORS: 2.4513', '\\n', 'Epoch 5/50, Train Loss: 6.7926, Val Loss:\n6.1950, SORS: 2.4460', '\\n', 'Epoch 6/50, Train Loss: 6.8027, Val Loss: 6.1917,\nSORS: 2.4442', '\\n', 'Epoch 7/50, Train Loss: 6.7769, Val Loss: 6.1858, SORS:\n2.4435', '\\n', 'Epoch 8/50, Train Loss: 6.7549, Val Loss: 6.1809, SORS: 2.4428',\n'\\n', 'Epoch 9/50, Train Loss: 6.7367, Val Loss: 6.1768, SORS: 2.4420', '\\n',\n'Epoch 10/50, Train Loss: 6.7198, Val Loss: 6.1731, SORS: 2.4412', '\\n', 'Epoch\n11/50, Train Loss: 6.7031, Val Loss: 6.1696, SORS: 2.4404', '\\n', 'Epoch 12/50,\nTrain Loss: 6.6869, Val Loss: 6.1662, SORS: 2.4397', '\\n', 'Epoch 13/50, Train\nLoss: 6.6709, Val Loss: 6.1631, SORS: 2.4390', '\\n', 'Epoch 14/50, Train Loss:\n6.6551, Val Loss: 6.1603, SORS: 2.4383', '\\n', 'Epoch 15/50, Train Loss: 6.6401,\nVal Loss: 6.1577, SORS: 2.4376', '\\n', 'Epoch 16/50, Train Loss: 6.6255, Val\nLoss: 6.1553, SORS: 2.4370', '\\n', 'Epoch 17/50, Train Loss: 6.6112, Val Loss:\n6.1531, SORS: 2.4364', '\\n', 'Epoch 18/50, Train Loss: 6.5976, Val Loss: 6.1512,\nSORS: 2.4358', '\\n', 'Epoch 19/50, Train Loss: 6.5842, Val Loss: 6.1494, SORS:\n2.4352', '\\n', 'Epoch 20/50, Train Loss: 6.5714, Val Loss: 6.1477, SORS:\n2.4346', '\\n', 'Epoch 21/50, Train Loss: 6.5588, Val Loss: 6.1461, SORS:\n2.4341', '\\n', 'Epoch 22/50, Train Loss: 6.5469, Val Loss: 6.1447, SORS:\n2.4336', '\\n', 'Epoch 23/50, Train Loss: 6.5350, Val Loss: 6.1434, SORS:\n2.4331', '\\n', 'Epoch 24/50, Train Loss: 6.5238, Val Loss: 6.1423, SORS:\n2.4326', '\\n', 'Epoch 25/50, Train Loss: 6.5124, Val Loss: 6.1412, SORS:\n2.4321', '\\n', 'Epoch 26/50, Train Loss: 6.5018, Val Loss: 6.1403, SORS:\n2.4316', '\\n', 'Epoch 27/50, Train Loss: 6.4911, Val Loss: 6.1393, SORS:\n2.4312', '\\n', 'Epoch 28/50, Train Loss: 6.4807, Val Loss: 6.1386, SORS:\n2.4308', '\\n', 'Epoch 29/50, Train Loss: 6.4710, Val Loss: 6.1379, SORS:\n2.4304', '\\n', 'Epoch 30/50, Train Loss: 6.4616, Val Loss: 6.1373, SORS:\n2.4300', '\\n', 'Epoch 31/50, Train Loss: 6.4523, Val Loss: 6.1368, SORS:\n2.4296', '\\n', 'Epoch 32/50, Train Loss: 6.4435, Val Loss: 6.1364, SORS:\n2.4292', '\\n', 'Epoch 33/50, Train Loss: 6.4349, Val Loss: 6.1363, SORS:\n2.4289', '\\n', 'Epoch 34/50, Train Loss: 6.4266, Val Loss: 6.1361, SORS:\n2.4286', '\\n', 'Epoch 35/50, Train Loss: 6.4178, Val Loss: 6.1364, SORS:\n2.4283', '\\n', 'Epoch 36/50, Train Loss: 6.4092, Val Loss: 6.1363, SORS:\n2.4280', '\\n', 'Epoch 37/50, Train Loss: 6.4007, Val Loss: 6.1364, SORS:\n2.4278', '\\n', 'Epoch 38/50, Train Loss: 6.3924, Val Loss: 6.1367, SORS:\n2.4275', '\\n', 'Epoch 39/50, Train Loss: 6.3841, Val Loss: 6.1372, SORS:\n2.4273', '\\n', 'Epoch 40/50, Train Loss: 6.3767, Val Loss: 6.1375, SORS:\n2.4271', '\\n', 'Epoch 41/50, Train Loss: 6.3695, Val Loss: 6.1377, SORS:\n2.4269', '\\n', 'Epoch 42/50, Train Loss: 6.3627, Val Loss: 6.1378, SORS:\n2.4267', '\\n', 'Epoch 43/50, Train Loss: 6.3569, Val Loss: 6.1379, SORS:\n2.4265', '\\n', 'Epoch 44/50, Train Loss: 6.3508, Val Loss: 6.1380, SORS:\n2.4263', '\\n', 'Epoch 45/50, Train Loss: 6.3455, Val Loss: 6.1379, SORS:\n2.4261', '\\n', 'Epoch 46/50, Train Loss: 6.3401, Val Loss: 6.1381, SORS:\n2.4259', '\\n', 'Epoch 47/50, Train Loss: 6.3351, Val Loss: 6.1380, SORS:\n2.4257', '\\n', 'Epoch 48/50, Train Loss: 6.3302, Val Loss: 6.1385, SORS:\n2.4256', '\\n', 'Epoch 49/50, Train Loss: 6.3252, Val Loss: 6.1385, SORS:\n2.4255', '\\n', 'Epoch 50/50, Train Loss: 6.3211, Val Loss: 6.1391, SORS:\n2.4254', '\\n', 'Training with batch size: 64', '\\n', 'Epoch 1/50, Train Loss:\n11.9955, Val Loss: 12.2566, SORS: 2.4905', '\\n', 'Epoch 2/50, Train Loss:\n11.2798, Val Loss: 11.4991, SORS: 2.4775', '\\n', 'Epoch 3/50, Train Loss:\n10.5719, Val Loss: 10.7524, SORS: 2.4750', '\\n', 'Epoch 4/50, Train Loss:\n9.8045, Val Loss: 9.9522, SORS: 2.4739', '\\n', 'Epoch 5/50, Train Loss: 8.9488,\nVal Loss: 9.0651, SORS: 2.4716', '\\n', 'Epoch 6/50, Train Loss: 8.0737, Val\nLoss: 8.1449, SORS: 2.4685', '\\n', 'Epoch 7/50, Train Loss: 7.3464, Val Loss:\n7.3325, SORS: 2.4650', '\\n', 'Epoch 8/50, Train Loss: 6.8703, Val Loss: 6.7480,\nSORS: 2.4614', '\\n', 'Epoch 9/50, Train Loss: 6.6518, Val Loss: 6.4180, SORS:\n2.4584', '\\n', 'Epoch 10/50, Train Loss: 6.6103, Val Loss: 6.2806, SORS:\n2.4559', '\\n', 'Epoch 11/50, Train Loss: 6.6407, Val Loss: 6.2440, SORS:\n2.4541', '\\n', 'Epoch 12/50, Train Loss: 6.6698, Val Loss: 6.2395, SORS:\n2.4530', '\\n', 'Epoch 13/50, Train Loss: 6.6774, Val Loss: 6.2389, SORS:\n2.4524', '\\n', 'Epoch 14/50, Train Loss: 6.6710, Val Loss: 6.2371, SORS:\n2.4520', '\\n', 'Epoch 15/50, Train Loss: 6.6602, Val Loss: 6.2350, SORS:\n2.4517', '\\n', 'Epoch 16/50, Train Loss: 6.6496, Val Loss: 6.2329, SORS:\n2.4513', '\\n', 'Epoch 17/50, Train Loss: 6.6405, Val Loss: 6.2309, SORS:\n2.4509', '\\n', 'Epoch 18/50, Train Loss: 6.6323, Val Loss: 6.2291, SORS:\n2.4505', '\\n', 'Epoch 19/50, Train Loss: 6.6245, Val Loss: 6.2273, SORS:\n2.4501', '\\n', 'Epoch 20/50, Train Loss: 6.6169, Val Loss: 6.2255, SORS:\n2.4497', '\\n', 'Epoch 21/50, Train Loss: 6.6092, Val Loss: 6.2238, SORS:\n2.4492', '\\n', 'Epoch 22/50, Train Loss: 6.6014, Val Loss: 6.2220, SORS:\n2.4488', '\\n', 'Epoch 23/50, Train Loss: 6.5935, Val Loss: 6.2203, SORS:\n2.4484', '\\n', 'Epoch 24/50, Train Loss: 6.5855, Val Loss: 6.2186, SORS:\n2.4480', '\\n', 'Epoch 25/50, Train Loss: 6.5776, Val Loss: 6.2169, SORS:\n2.4475', '\\n', 'Epoch 26/50, Train Loss: 6.5696, Val Loss: 6.2152, SORS:\n2.4471', '\\n', 'Epoch 27/50, Train Loss: 6.5616, Val Loss: 6.2136, SORS:\n2.4467', '\\n', 'Epoch 28/50, Train Loss: 6.5537, Val Loss: 6.2120, SORS:\n2.4462', '\\n', 'Epoch 29/50, Train Loss: 6.5457, Val Loss: 6.2103, SORS:\n2.4458', '\\n', 'Epoch 30/50, Train Loss: 6.5380, Val Loss: 6.2087, SORS:\n2.4453', '\\n', 'Epoch 31/50, Train Loss: 6.5303, Val Loss: 6.2071, SORS:\n2.4449', '\\n', 'Epoch 32/50, Train Loss: 6.5226, Val Loss: 6.2055, SORS:\n2.4444', '\\n', 'Epoch 33/50, Train Loss: 6.5150, Val Loss: 6.2039, SORS:\n2.4440', '\\n', 'Epoch 34/50, Train Loss: 6.5075, Val Loss: 6.2024, SORS:\n2.4435', '\\n', 'Epoch 35/50, Train Loss: 6.5000, Val Loss: 6.2008, SORS:\n2.4431', '\\n', 'Epoch 36/50, Train Loss: 6.4923, Val Loss: 6.1994, SORS:\n2.4427', '\\n', 'Epoch 37/50, Train Loss: 6.4847, Val Loss: 6.1979, SORS:\n2.4422', '\\n', 'Epoch 38/50, Train Loss: 6.4771, Val Loss: 6.1965, SORS:\n2.4418', '\\n', 'Epoch 39/50, Train Loss: 6.4693, Val Loss: 6.1951, SORS:\n2.4413', '\\n', 'Epoch 40/50, Train Loss: 6.4619, Val Loss: 6.1937, SORS:\n2.4409', '\\n', 'Epoch 41/50, Train Loss: 6.4549, Val Loss: 6.1923, SORS:\n2.4405', '\\n', 'Epoch 42/50, Train Loss: 6.4479, Val Loss: 6.1910, SORS:\n2.4400', '\\n', 'Epoch 43/50, Train Loss: 6.4408, Val Loss: 6.1897, SORS:\n2.4396', '\\n', 'Epoch 44/50, Train Loss: 6.4337, Val Loss: 6.1885, SORS:\n2.4392', '\\n', 'Epoch 45/50, Train Loss: 6.4267, Val Loss: 6.1872, SORS:\n2.4388', '\\n', 'Epoch 46/50, Train Loss: 6.4199, Val Loss: 6.1860, SORS:\n2.4383', '\\n', 'Epoch 47/50, Train Loss: 6.4132, Val Loss: 6.1848, SORS:\n2.4379', '\\n', 'Epoch 48/50, Train Loss: 6.4065, Val Loss: 6.1837, SORS:\n2.4375', '\\n', 'Epoch 49/50, Train Loss: 6.3998, Val Loss: 6.1826, SORS:\n2.4371', '\\n', 'Epoch 50/50, Train Loss: 6.3934, Val Loss: 6.1815, SORS:\n2.4367', '\\n', 'Training with batch size: 128', '\\n', 'Epoch 1/50, Train Loss:\n11.0955, Val Loss: 11.3447, SORS: 2.4872', '\\n', 'Epoch 2/50, Train Loss:\n10.5948, Val Loss: 10.8394, SORS: 2.4863', '\\n', 'Epoch 3/50, Train Loss:\n10.1126, Val Loss: 10.3477, SORS: 2.4849', '\\n', 'Epoch 4/50, Train Loss:\n9.6378, Val Loss: 9.8638, SORS: 2.4834', '\\n', 'Epoch 5/50, Train Loss: 9.1758,\nVal Loss: 9.3842, SORS: 2.4816', '\\n', 'Epoch 6/50, Train Loss: 8.7260, Val\nLoss: 8.9090, SORS: 2.4799', '\\n', 'Epoch 7/50, Train Loss: 8.2874, Val Loss:\n8.4412, SORS: 2.4781', '\\n', 'Epoch 8/50, Train Loss: 7.8796, Val Loss: 7.9923,\nSORS: 2.4764', '\\n', 'Epoch 9/50, Train Loss: 7.5071, Val Loss: 7.5725, SORS:\n2.4741', '\\n', 'Epoch 10/50, Train Loss: 7.1819, Val Loss: 7.1921, SORS:\n2.4711', '\\n', 'Epoch 11/50, Train Loss: 6.9258, Val Loss: 6.8696, SORS:\n2.4677', '\\n', 'Epoch 12/50, Train Loss: 6.7444, Val Loss: 6.6172, SORS:\n2.4646', '\\n', 'Epoch 13/50, Train Loss: 6.6385, Val Loss: 6.4419, SORS:\n2.4622', '\\n', 'Epoch 14/50, Train Loss: 6.5926, Val Loss: 6.3338, SORS:\n2.4601', '\\n', 'Epoch 15/50, Train Loss: 6.5904, Val Loss: 6.2782, SORS:\n2.4583', '\\n', 'Epoch 16/50, Train Loss: 6.6111, Val Loss: 6.2565, SORS:\n2.4568', '\\n', 'Epoch 17/50, Train Loss: 6.6346, Val Loss: 6.2521, SORS:\n2.4558', '\\n', 'Epoch 18/50, Train Loss: 6.6497, Val Loss: 6.2531, SORS:\n2.4551', '\\n', 'Epoch 19/50, Train Loss: 6.6528, Val Loss: 6.2537, SORS:\n2.4546', '\\n', 'Epoch 20/50, Train Loss: 6.6462, Val Loss: 6.2527, SORS:\n2.4542', '\\n', 'Epoch 21/50, Train Loss: 6.6349, Val Loss: 6.2505, SORS:\n2.4539', '\\n', 'Epoch 22/50, Train Loss: 6.6216, Val Loss: 6.2479, SORS:\n2.4536', '\\n', 'Epoch 23/50, Train Loss: 6.6088, Val Loss: 6.2454, SORS:\n2.4532', '\\n', 'Epoch 24/50, Train Loss: 6.5970, Val Loss: 6.2430, SORS:\n2.4528', '\\n', 'Epoch 25/50, Train Loss: 6.5863, Val Loss: 6.2409, SORS:\n2.4524', '\\n', 'Epoch 26/50, Train Loss: 6.5766, Val Loss: 6.2389, SORS:\n2.4520', '\\n', 'Epoch 27/50, Train Loss: 6.5677, Val Loss: 6.2371, SORS:\n2.4516', '\\n', 'Epoch 28/50, Train Loss: 6.5591, Val Loss: 6.2353, SORS:\n2.4511', '\\n', 'Epoch 29/50, Train Loss: 6.5509, Val Loss: 6.2336, SORS:\n2.4507', '\\n', 'Epoch 30/50, Train Loss: 6.5423, Val Loss: 6.2319, SORS:\n2.4502', '\\n', 'Epoch 31/50, Train Loss: 6.5333, Val Loss: 6.2300, SORS:\n2.4497', '\\n', 'Epoch 32/50, Train Loss: 6.5232, Val Loss: 6.2280, SORS:\n2.4492', '\\n', 'Epoch 33/50, Train Loss: 6.5120, Val Loss: 6.2258, SORS:\n2.4487', '\\n', 'Epoch 34/50, Train Loss: 6.5003, Val Loss: 6.2236, SORS:\n2.4481', '\\n', 'Epoch 35/50, Train Loss: 6.4888, Val Loss: 6.2215, SORS:\n2.4476', '\\n', 'Epoch 36/50, Train Loss: 6.4773, Val Loss: 6.2196, SORS:\n2.4471', '\\n', 'Epoch 37/50, Train Loss: 6.4661, Val Loss: 6.2177, SORS:\n2.4466', '\\n', 'Epoch 38/50, Train Loss: 6.4553, Val Loss: 6.2159, SORS:\n2.4461', '\\n', 'Epoch 39/50, Train Loss: 6.4447, Val Loss: 6.2141, SORS:\n2.4455', '\\n', 'Epoch 40/50, Train Loss: 6.4343, Val Loss: 6.2123, SORS:\n2.4450', '\\n', 'Epoch 41/50, Train Loss: 6.4239, Val Loss: 6.2105, SORS:\n2.4445', '\\n', 'Epoch 42/50, Train Loss: 6.4137, Val Loss: 6.2088, SORS:\n2.4439', '\\n', 'Epoch 43/50, Train Loss: 6.4035, Val Loss: 6.2071, SORS:\n2.4434', '\\n', 'Epoch 44/50, Train Loss: 6.3934, Val Loss: 6.2054, SORS:\n2.4429', '\\n', 'Epoch 45/50, Train Loss: 6.3833, Val Loss: 6.2037, SORS:\n2.4423', '\\n', 'Epoch 46/50, Train Loss: 6.3734, Val Loss: 6.2021, SORS:\n2.4418', '\\n', 'Epoch 47/50, Train Loss: 6.3632, Val Loss: 6.2005, SORS:\n2.4413', '\\n', 'Epoch 48/50, Train Loss: 6.3531, Val Loss: 6.1989, SORS:\n2.4407', '\\n', 'Epoch 49/50, Train Loss: 6.3430, Val Loss: 6.1974, SORS:\n2.4402', '\\n', 'Epoch 50/50, Train Loss: 6.3330, Val Loss: 6.1958, SORS:\n2.4397', '\\n', 'Training with batch size: 256', '\\n', 'Epoch 1/50, Train Loss:\n12.2534, Val Loss: 12.3903, SORS: 2.4964', '\\n', 'Epoch 2/50, Train Loss:\n12.0336, Val Loss: 12.1734, SORS: 2.4882', '\\n', 'Epoch 3/50, Train Loss:\n11.8116, Val Loss: 11.9537, SORS: 2.4854', '\\n', 'Epoch 4/50, Train Loss:\n11.5856, Val Loss: 11.7286, SORS: 2.4842', '\\n', 'Epoch 5/50, Train Loss:\n11.3532, Val Loss: 11.4972, SORS: 2.4836', '\\n', 'Epoch 6/50, Train Loss:\n11.1188, Val Loss: 11.2588, SORS: 2.4834', '\\n', 'Epoch 7/50, Train Loss:\n10.8754, Val Loss: 11.0118, SORS: 2.4832', '\\n', 'Epoch 8/50, Train Loss:\n10.6256, Val Loss: 10.7554, SORS: 2.4830', '\\n', 'Epoch 9/50, Train Loss:\n10.3692, Val Loss: 10.4896, SORS: 2.4829', '\\n', 'Epoch 10/50, Train Loss:\n10.1024, Val Loss: 10.2119, SORS: 2.4826', '\\n', 'Epoch 11/50, Train Loss:\n9.8220, Val Loss: 9.9228, SORS: 2.4822', '\\n', 'Epoch 12/50, Train Loss: 9.5310,\nVal Loss: 9.6240, SORS: 2.4815', '\\n', 'Epoch 13/50, Train Loss: 9.2361, Val\nLoss: 9.3182, SORS: 2.4807', '\\n', 'Epoch 14/50, Train Loss: 8.9412, Val Loss:\n9.0085, SORS: 2.4799', '\\n', 'Epoch 15/50, Train Loss: 8.6514, Val Loss: 8.6988,\nSORS: 2.4790', '\\n', 'Epoch 16/50, Train Loss: 8.3676, Val Loss: 8.3929, SORS:\n2.4780', '\\n', 'Epoch 17/50, Train Loss: 8.0894, Val Loss: 8.0936, SORS:\n2.4765', '\\n', 'Epoch 18/50, Train Loss: 7.8246, Val Loss: 7.8076, SORS:\n2.4751', '\\n', 'Epoch 19/50, Train Loss: 7.5769, Val Loss: 7.5405, SORS:\n2.4738', '\\n', 'Epoch 20/50, Train Loss: 7.3516, Val Loss: 7.2937, SORS:\n2.4723', '\\n', 'Epoch 21/50, Train Loss: 7.1531, Val Loss: 7.0717, SORS:\n2.4707', '\\n', 'Epoch 22/50, Train Loss: 6.9863, Val Loss: 6.8785, SORS:\n2.4692', '\\n', 'Epoch 23/50, Train Loss: 6.8512, Val Loss: 6.7160, SORS:\n2.4678', '\\n', 'Epoch 24/50, Train Loss: 6.7502, Val Loss: 6.5834, SORS:\n2.4664', '\\n', 'Epoch 25/50, Train Loss: 6.6788, Val Loss: 6.4797, SORS:\n2.4649', '\\n', 'Epoch 26/50, Train Loss: 6.6341, Val Loss: 6.4028, SORS:\n2.4634', '\\n', 'Epoch 27/50, Train Loss: 6.6105, Val Loss: 6.3488, SORS:\n2.4621', '\\n', 'Epoch 28/50, Train Loss: 6.6031, Val Loss: 6.3132, SORS:\n2.4609', '\\n', 'Epoch 29/50, Train Loss: 6.6067, Val Loss: 6.2911, SORS:\n2.4598', '\\n', 'Epoch 30/50, Train Loss: 6.6149, Val Loss: 6.2785, SORS:\n2.4588', '\\n', 'Epoch 31/50, Train Loss: 6.6241, Val Loss: 6.2720, SORS:\n2.4580', '\\n', 'Epoch 32/50, Train Loss: 6.6314, Val Loss: 6.2687, SORS:\n2.4574', '\\n', 'Epoch 33/50, Train Loss: 6.6352, Val Loss: 6.2670, SORS:\n2.4568', '\\n', 'Epoch 34/50, Train Loss: 6.6351, Val Loss: 6.2657, SORS:\n2.4564', '\\n', 'Epoch 35/50, Train Loss: 6.6316, Val Loss: 6.2645, SORS:\n2.4560', '\\n', 'Epoch 36/50, Train Loss: 6.6252, Val Loss: 6.2632, SORS:\n2.4557', '\\n', 'Epoch 37/50, Train Loss: 6.6169, Val Loss: 6.2617, SORS:\n2.4554', '\\n', 'Epoch 38/50, Train Loss: 6.6075, Val Loss: 6.2603, SORS:\n2.4551', '\\n', 'Epoch 39/50, Train Loss: 6.5975, Val Loss: 6.2589, SORS:\n2.4548', '\\n', 'Epoch 40/50, Train Loss: 6.5875, Val Loss: 6.2575, SORS:\n2.4546', '\\n', 'Epoch 41/50, Train Loss: 6.5776, Val Loss: 6.2562, SORS:\n2.4543', '\\n', 'Epoch 42/50, Train Loss: 6.5679, Val Loss: 6.2550, SORS:\n2.4540', '\\n', 'Epoch 43/50, Train Loss: 6.5586, Val Loss: 6.2537, SORS:\n2.4537', '\\n', 'Epoch 44/50, Train Loss: 6.5495, Val Loss: 6.2524, SORS:\n2.4534', '\\n', 'Epoch 45/50, Train Loss: 6.5405, Val Loss: 6.2511, SORS:\n2.4530', '\\n', 'Epoch 46/50, Train Loss: 6.5319, Val Loss: 6.2496, SORS:\n2.4526', '\\n', 'Epoch 47/50, Train Loss: 6.5230, Val Loss: 6.2481, SORS:\n2.4522', '\\n', 'Epoch 48/50, Train Loss: 6.5140, Val Loss: 6.2465, SORS:\n2.4518', '\\n', 'Epoch 49/50, Train Loss: 6.5051, Val Loss: 6.2448, SORS:\n2.4513', '\\n', 'Epoch 50/50, Train Loss: 6.4958, Val Loss: 6.2430, SORS:\n2.4509', '\\n', 'Execution time: 7 seconds seconds (time limit is 10 minutes).']", "['Using device: cuda', '\\n', 'Training with batch size: 16', '\\n', 'Epoch 1/50,\nTrain Loss: 10.3411, Val Loss: 9.1841, SORS: 2.4844', '\\n', 'Epoch 2/50, Train\nLoss: 7.0184, Val Loss: 6.5130, SORS: 2.4685', '\\n', 'Epoch 3/50, Train Loss:\n6.6065, Val Loss: 6.2969, SORS: 2.4622', '\\n', 'Epoch 4/50, Train Loss: 6.5735,\nVal Loss: 6.2844, SORS: 2.4602', '\\n', 'Epoch 5/50, Train Loss: 6.5422, Val\nLoss: 6.2729, SORS: 2.4582', '\\n', 'Epoch 6/50, Train Loss: 6.5064, Val Loss:\n6.2631, SORS: 2.4563', '\\n', 'Epoch 7/50, Train Loss: 6.4692, Val Loss: 6.2544,\nSORS: 2.4545', '\\n', 'Epoch 8/50, Train Loss: 6.4219, Val Loss: 6.2441, SORS:\n2.4521', '\\n', 'Epoch 9/50, Train Loss: 6.3737, Val Loss: 6.2349, SORS: 2.4498',\n'\\n', 'Epoch 10/50, Train Loss: 6.3367, Val Loss: 6.2278, SORS: 2.4479', '\\n',\n'Epoch 11/50, Train Loss: 6.3000, Val Loss: 6.2224, SORS: 2.4462', '\\n', 'Epoch\n12/50, Train Loss: 6.2701, Val Loss: 6.2165, SORS: 2.4445', '\\n', 'Epoch 13/50,\nTrain Loss: 6.2436, Val Loss: 6.2108, SORS: 2.4428', '\\n', 'Epoch 14/50, Train\nLoss: 6.2230, Val Loss: 6.2057, SORS: 2.4412', '\\n', 'Epoch 15/50, Train Loss:\n6.2037, Val Loss: 6.2010, SORS: 2.4398', '\\n', 'Epoch 16/50, Train Loss: 6.1830,\nVal Loss: 6.1968, SORS: 2.4383', '\\n', 'Epoch 17/50, Train Loss: 6.1674, Val\nLoss: 6.1925, SORS: 2.4370', '\\n', 'Epoch 18/50, Train Loss: 6.1483, Val Loss:\n6.1895, SORS: 2.4358', '\\n', 'Epoch 19/50, Train Loss: 6.1335, Val Loss: 6.1864,\nSORS: 2.4346', '\\n', 'Epoch 20/50, Train Loss: 6.1178, Val Loss: 6.1836, SORS:\n2.4335', '\\n', 'Epoch 21/50, Train Loss: 6.1074, Val Loss: 6.1807, SORS:\n2.4324', '\\n', 'Epoch 22/50, Train Loss: 6.0972, Val Loss: 6.1783, SORS:\n2.4315', '\\n', 'Epoch 23/50, Train Loss: 6.0865, Val Loss: 6.1762, SORS:\n2.4306', '\\n', 'Epoch 24/50, Train Loss: 6.0773, Val Loss: 6.1737, SORS:\n2.4297', '\\n', 'Epoch 25/50, Train Loss: 6.0682, Val Loss: 6.1715, SORS:\n2.4288', '\\n', 'Epoch 26/50, Train Loss: 6.0591, Val Loss: 6.1693, SORS:\n2.4280', '\\n', 'Epoch 27/50, Train Loss: 6.0503, Val Loss: 6.1673, SORS:\n2.4272', '\\n', 'Epoch 28/50, Train Loss: 6.0447, Val Loss: 6.1655, SORS:\n2.4265', '\\n', 'Epoch 29/50, Train Loss: 6.0373, Val Loss: 6.1636, SORS:\n2.4258', '\\n', 'Epoch 30/50, Train Loss: 6.0307, Val Loss: 6.1628, SORS:\n2.4253', '\\n', 'Epoch 31/50, Train Loss: 6.0238, Val Loss: 6.1597, SORS:\n2.4244', '\\n', 'Epoch 32/50, Train Loss: 6.0180, Val Loss: 6.1581, SORS:\n2.4238', '\\n', 'Epoch 33/50, Train Loss: 6.0117, Val Loss: 6.1557, SORS:\n2.4231', '\\n', 'Epoch 34/50, Train Loss: 6.0078, Val Loss: 6.1541, SORS:\n2.4227', '\\n', 'Epoch 35/50, Train Loss: 6.0037, Val Loss: 6.1532, SORS:\n2.4223', '\\n', 'Epoch 36/50, Train Loss: 6.0014, Val Loss: 6.1523, SORS:\n2.4219', '\\n', 'Epoch 37/50, Train Loss: 5.9922, Val Loss: 6.1508, SORS:\n2.4214', '\\n', 'Epoch 38/50, Train Loss: 5.9925, Val Loss: 6.1495, SORS:\n2.4210', '\\n', 'Epoch 39/50, Train Loss: 5.9887, Val Loss: 6.1487, SORS:\n2.4207', '\\n', 'Epoch 40/50, Train Loss: 5.9841, Val Loss: 6.1474, SORS:\n2.4203', '\\n', 'Epoch 41/50, Train Loss: 5.9766, Val Loss: 6.1462, SORS:\n2.4200', '\\n', 'Epoch 42/50, Train Loss: 5.9696, Val Loss: 6.1452, SORS:\n2.4194', '\\n', 'Epoch 43/50, Train Loss: 5.9660, Val Loss: 6.1446, SORS:\n2.4192', '\\n', 'Epoch 44/50, Train Loss: 5.9652, Val Loss: 6.1440, SORS:\n2.4190', '\\n', 'Epoch 45/50, Train Loss: 5.9590, Val Loss: 6.1444, SORS:\n2.4190', '\\n', 'Epoch 46/50, Train Loss: 5.9587, Val Loss: 6.1427, SORS:\n2.4186', '\\n', 'Epoch 47/50, Train Loss: 5.9604, Val Loss: 6.1420, SORS:\n2.4184', '\\n', 'Epoch 48/50, Train Loss: 5.9548, Val Loss: 6.1409, SORS:\n2.4181', '\\n', 'Epoch 49/50, Train Loss: 5.9585, Val Loss: 6.1405, SORS:\n2.4180', '\\n', 'Epoch 50/50, Train Loss: 5.9498, Val Loss: 6.1391, SORS:\n2.4174', '\\n', 'Training with batch size: 32', '\\n', 'Epoch 1/50, Train Loss:\n10.9362, Val Loss: 10.9903, SORS: 2.4749', '\\n', 'Epoch 2/50, Train Loss:\n9.2318, Val Loss: 9.2399, SORS: 2.4725', '\\n', 'Epoch 3/50, Train Loss: 7.6317,\nVal Loss: 7.5698, SORS: 2.4684', '\\n', 'Epoch 4/50, Train Loss: 6.7446, Val\nLoss: 6.5401, SORS: 2.4629', '\\n', 'Epoch 5/50, Train Loss: 6.6349, Val Loss:\n6.2780, SORS: 2.4588', '\\n', 'Epoch 6/50, Train Loss: 6.6868, Val Loss: 6.2703,\nSORS: 2.4567', '\\n', 'Epoch 7/50, Train Loss: 6.6791, Val Loss: 6.2662, SORS:\n2.4558', '\\n', 'Epoch 8/50, Train Loss: 6.6604, Val Loss: 6.2604, SORS: 2.4551',\n'\\n', 'Epoch 9/50, Train Loss: 6.6460, Val Loss: 6.2555, SORS: 2.4542', '\\n',\n'Epoch 10/50, Train Loss: 6.6332, Val Loss: 6.2509, SORS: 2.4534', '\\n', 'Epoch\n11/50, Train Loss: 6.6206, Val Loss: 6.2465, SORS: 2.4525', '\\n', 'Epoch 12/50,\nTrain Loss: 6.6079, Val Loss: 6.2421, SORS: 2.4517', '\\n', 'Epoch 13/50, Train\nLoss: 6.5955, Val Loss: 6.2378, SORS: 2.4508', '\\n', 'Epoch 14/50, Train Loss:\n6.5834, Val Loss: 6.2336, SORS: 2.4500', '\\n', 'Epoch 15/50, Train Loss: 6.5718,\nVal Loss: 6.2296, SORS: 2.4491', '\\n', 'Epoch 16/50, Train Loss: 6.5602, Val\nLoss: 6.2258, SORS: 2.4483', '\\n', 'Epoch 17/50, Train Loss: 6.5486, Val Loss:\n6.2218, SORS: 2.4475', '\\n', 'Epoch 18/50, Train Loss: 6.5372, Val Loss: 6.2179,\nSORS: 2.4466', '\\n', 'Epoch 19/50, Train Loss: 6.5263, Val Loss: 6.2138, SORS:\n2.4457', '\\n', 'Epoch 20/50, Train Loss: 6.5155, Val Loss: 6.2102, SORS:\n2.4449', '\\n', 'Epoch 21/50, Train Loss: 6.5037, Val Loss: 6.2069, SORS:\n2.4441', '\\n', 'Epoch 22/50, Train Loss: 6.4919, Val Loss: 6.2031, SORS:\n2.4432', '\\n', 'Epoch 23/50, Train Loss: 6.4809, Val Loss: 6.1998, SORS:\n2.4424', '\\n', 'Epoch 24/50, Train Loss: 6.4699, Val Loss: 6.1961, SORS:\n2.4415', '\\n', 'Epoch 25/50, Train Loss: 6.4592, Val Loss: 6.1930, SORS:\n2.4407', '\\n', 'Epoch 26/50, Train Loss: 6.4494, Val Loss: 6.1901, SORS:\n2.4400', '\\n', 'Epoch 27/50, Train Loss: 6.4392, Val Loss: 6.1875, SORS:\n2.4393', '\\n', 'Epoch 28/50, Train Loss: 6.4293, Val Loss: 6.1843, SORS:\n2.4385', '\\n', 'Epoch 29/50, Train Loss: 6.4200, Val Loss: 6.1816, SORS:\n2.4377', '\\n', 'Epoch 30/50, Train Loss: 6.4106, Val Loss: 6.1786, SORS:\n2.4369', '\\n', 'Epoch 31/50, Train Loss: 6.4022, Val Loss: 6.1760, SORS:\n2.4362', '\\n', 'Epoch 32/50, Train Loss: 6.3936, Val Loss: 6.1725, SORS:\n2.4353', '\\n', 'Epoch 33/50, Train Loss: 6.3851, Val Loss: 6.1700, SORS:\n2.4346', '\\n', 'Epoch 34/50, Train Loss: 6.3776, Val Loss: 6.1676, SORS:\n2.4339', '\\n', 'Epoch 35/50, Train Loss: 6.3696, Val Loss: 6.1654, SORS:\n2.4333', '\\n', 'Epoch 36/50, Train Loss: 6.3623, Val Loss: 6.1625, SORS:\n2.4325', '\\n', 'Epoch 37/50, Train Loss: 6.3548, Val Loss: 6.1604, SORS:\n2.4319', '\\n', 'Epoch 38/50, Train Loss: 6.3479, Val Loss: 6.1576, SORS:\n2.4311', '\\n', 'Epoch 39/50, Train Loss: 6.3403, Val Loss: 6.1557, SORS:\n2.4305', '\\n', 'Epoch 40/50, Train Loss: 6.3345, Val Loss: 6.1525, SORS:\n2.4297', '\\n', 'Epoch 41/50, Train Loss: 6.3271, Val Loss: 6.1498, SORS:\n2.4289', '\\n', 'Epoch 42/50, Train Loss: 6.3204, Val Loss: 6.1471, SORS:\n2.4281', '\\n', 'Epoch 43/50, Train Loss: 6.3136, Val Loss: 6.1442, SORS:\n2.4273', '\\n', 'Epoch 44/50, Train Loss: 6.3066, Val Loss: 6.1422, SORS:\n2.4267', '\\n', 'Epoch 45/50, Train Loss: 6.3009, Val Loss: 6.1400, SORS:\n2.4261', '\\n', 'Epoch 46/50, Train Loss: 6.2944, Val Loss: 6.1376, SORS:\n2.4254', '\\n', 'Epoch 47/50, Train Loss: 6.2906, Val Loss: 6.1351, SORS:\n2.4246', '\\n', 'Epoch 48/50, Train Loss: 6.2835, Val Loss: 6.1327, SORS:\n2.4240', '\\n', 'Epoch 49/50, Train Loss: 6.2798, Val Loss: 6.1311, SORS:\n2.4235', '\\n', 'Epoch 50/50, Train Loss: 6.2747, Val Loss: 6.1280, SORS:\n2.4227', '\\n', 'Training with batch size: 64', '\\n', 'Epoch 1/50, Train Loss:\n11.4860, Val Loss: 11.6238, SORS: 2.4720', '\\n', 'Epoch 2/50, Train Loss:\n10.8232, Val Loss: 10.9441, SORS: 2.4667', '\\n', 'Epoch 3/50, Train Loss:\n10.0939, Val Loss: 10.1833, SORS: 2.4615', '\\n', 'Epoch 4/50, Train Loss:\n9.2738, Val Loss: 9.3149, SORS: 2.4564', '\\n', 'Epoch 5/50, Train Loss: 8.4121,\nVal Loss: 8.3930, SORS: 2.4508', '\\n', 'Epoch 6/50, Train Loss: 7.6112, Val\nLoss: 7.5168, SORS: 2.4446', '\\n', 'Epoch 7/50, Train Loss: 6.9913, Val Loss:\n6.8057, SORS: 2.4384', '\\n', 'Epoch 8/50, Train Loss: 6.6396, Val Loss: 6.3527,\nSORS: 2.4331', '\\n', 'Epoch 9/50, Train Loss: 6.5357, Val Loss: 6.1503, SORS:\n2.4287', '\\n', 'Epoch 10/50, Train Loss: 6.5627, Val Loss: 6.1023, SORS:\n2.4257', '\\n', 'Epoch 11/50, Train Loss: 6.6020, Val Loss: 6.1038, SORS:\n2.4242', '\\n', 'Epoch 12/50, Train Loss: 6.6108, Val Loss: 6.1067, SORS:\n2.4237', '\\n', 'Epoch 13/50, Train Loss: 6.5996, Val Loss: 6.1057, SORS:\n2.4237', '\\n', 'Epoch 14/50, Train Loss: 6.5845, Val Loss: 6.1041, SORS:\n2.4237', '\\n', 'Epoch 15/50, Train Loss: 6.5718, Val Loss: 6.1034, SORS:\n2.4236', '\\n', 'Epoch 16/50, Train Loss: 6.5618, Val Loss: 6.1032, SORS:\n2.4235', '\\n', 'Epoch 17/50, Train Loss: 6.5533, Val Loss: 6.1031, SORS:\n2.4234', '\\n', 'Epoch 18/50, Train Loss: 6.5450, Val Loss: 6.1031, SORS:\n2.4232', '\\n', 'Epoch 19/50, Train Loss: 6.5360, Val Loss: 6.1031, SORS:\n2.4231', '\\n', 'Epoch 20/50, Train Loss: 6.5268, Val Loss: 6.1031, SORS:\n2.4229', '\\n', 'Epoch 21/50, Train Loss: 6.5179, Val Loss: 6.1030, SORS:\n2.4227', '\\n', 'Epoch 22/50, Train Loss: 6.5096, Val Loss: 6.1022, SORS:\n2.4224', '\\n', 'Epoch 23/50, Train Loss: 6.5006, Val Loss: 6.1008, SORS:\n2.4219', '\\n', 'Epoch 24/50, Train Loss: 6.4914, Val Loss: 6.1006, SORS:\n2.4216', '\\n', 'Epoch 25/50, Train Loss: 6.4819, Val Loss: 6.1008, SORS:\n2.4215', '\\n', 'Epoch 26/50, Train Loss: 6.4714, Val Loss: 6.1013, SORS:\n2.4213', '\\n', 'Epoch 27/50, Train Loss: 6.4601, Val Loss: 6.1013, SORS:\n2.4211', '\\n', 'Epoch 28/50, Train Loss: 6.4489, Val Loss: 6.1025, SORS:\n2.4211', '\\n', 'Epoch 29/50, Train Loss: 6.4380, Val Loss: 6.1035, SORS:\n2.4211', '\\n', 'Epoch 30/50, Train Loss: 6.4273, Val Loss: 6.1044, SORS:\n2.4211', '\\n', 'Epoch 31/50, Train Loss: 6.4167, Val Loss: 6.1052, SORS:\n2.4210', '\\n', 'Epoch 32/50, Train Loss: 6.4066, Val Loss: 6.1062, SORS:\n2.4210', '\\n', 'Epoch 33/50, Train Loss: 6.3961, Val Loss: 6.1072, SORS:\n2.4209', '\\n', 'Epoch 34/50, Train Loss: 6.3873, Val Loss: 6.1078, SORS:\n2.4208', '\\n', 'Epoch 35/50, Train Loss: 6.3798, Val Loss: 6.1082, SORS:\n2.4207', '\\n', 'Epoch 36/50, Train Loss: 6.3712, Val Loss: 6.1088, SORS:\n2.4206', '\\n', 'Epoch 37/50, Train Loss: 6.3628, Val Loss: 6.1094, SORS:\n2.4205', '\\n', 'Epoch 38/50, Train Loss: 6.3555, Val Loss: 6.1099, SORS:\n2.4203', '\\n', 'Epoch 39/50, Train Loss: 6.3471, Val Loss: 6.1104, SORS:\n2.4202', '\\n', 'Epoch 40/50, Train Loss: 6.3394, Val Loss: 6.1108, SORS:\n2.4200', '\\n', 'Epoch 41/50, Train Loss: 6.3318, Val Loss: 6.1115, SORS:\n2.4200', '\\n', 'Epoch 42/50, Train Loss: 6.3242, Val Loss: 6.1119, SORS:\n2.4198', '\\n', 'Epoch 43/50, Train Loss: 6.3163, Val Loss: 6.1125, SORS:\n2.4197', '\\n', 'Epoch 44/50, Train Loss: 6.3097, Val Loss: 6.1132, SORS:\n2.4196', '\\n', 'Epoch 45/50, Train Loss: 6.3026, Val Loss: 6.1137, SORS:\n2.4195', '\\n', 'Epoch 46/50, Train Loss: 6.2951, Val Loss: 6.1143, SORS:\n2.4194', '\\n', 'Epoch 47/50, Train Loss: 6.2892, Val Loss: 6.1150, SORS:\n2.4193', '\\n', 'Epoch 48/50, Train Loss: 6.2829, Val Loss: 6.1156, SORS:\n2.4192', '\\n', 'Epoch 49/50, Train Loss: 6.2764, Val Loss: 6.1162, SORS:\n2.4191', '\\n', 'Epoch 50/50, Train Loss: 6.2700, Val Loss: 6.1169, SORS:\n2.4190', '\\n', 'Training with batch size: 128', '\\n', 'Epoch 1/50, Train Loss:\n11.4136, Val Loss: 11.5275, SORS: 2.4790', '\\n', 'Epoch 2/50, Train Loss:\n10.9825, Val Loss: 11.0690, SORS: 2.4771', '\\n', 'Epoch 3/50, Train Loss:\n10.5739, Val Loss: 10.6329, SORS: 2.4762', '\\n', 'Epoch 4/50, Train Loss:\n10.1806, Val Loss: 10.2103, SORS: 2.4756', '\\n', 'Epoch 5/50, Train Loss:\n9.7830, Val Loss: 9.7905, SORS: 2.4747', '\\n', 'Epoch 6/50, Train Loss: 9.3828,\nVal Loss: 9.3707, SORS: 2.4734', '\\n', 'Epoch 7/50, Train Loss: 8.9883, Val\nLoss: 8.9547, SORS: 2.4723', '\\n', 'Epoch 8/50, Train Loss: 8.6001, Val Loss:\n8.5441, SORS: 2.4711', '\\n', 'Epoch 9/50, Train Loss: 8.2245, Val Loss: 8.1437,\nSORS: 2.4693', '\\n', 'Epoch 10/50, Train Loss: 7.8745, Val Loss: 7.7645, SORS:\n2.4680', '\\n', 'Epoch 11/50, Train Loss: 7.5587, Val Loss: 7.4145, SORS:\n2.4666', '\\n', 'Epoch 12/50, Train Loss: 7.2841, Val Loss: 7.1016, SORS:\n2.4650', '\\n', 'Epoch 13/50, Train Loss: 7.0589, Val Loss: 6.8363, SORS:\n2.4635', '\\n', 'Epoch 14/50, Train Loss: 6.8905, Val Loss: 6.6239, SORS:\n2.4618', '\\n', 'Epoch 15/50, Train Loss: 6.7776, Val Loss: 6.4656, SORS:\n2.4600', '\\n', 'Epoch 16/50, Train Loss: 6.7142, Val Loss: 6.3588, SORS:\n2.4584', '\\n', 'Epoch 17/50, Train Loss: 6.6885, Val Loss: 6.2944, SORS:\n2.4570', '\\n', 'Epoch 18/50, Train Loss: 6.6867, Val Loss: 6.2607, SORS:\n2.4557', '\\n', 'Epoch 19/50, Train Loss: 6.6954, Val Loss: 6.2457, SORS:\n2.4546', '\\n', 'Epoch 20/50, Train Loss: 6.7047, Val Loss: 6.2400, SORS:\n2.4538', '\\n', 'Epoch 21/50, Train Loss: 6.7096, Val Loss: 6.2378, SORS:\n2.4531', '\\n', 'Epoch 22/50, Train Loss: 6.7089, Val Loss: 6.2361, SORS:\n2.4526', '\\n', 'Epoch 23/50, Train Loss: 6.7040, Val Loss: 6.2342, SORS:\n2.4522', '\\n', 'Epoch 24/50, Train Loss: 6.6964, Val Loss: 6.2321, SORS:\n2.4518', '\\n', 'Epoch 25/50, Train Loss: 6.6877, Val Loss: 6.2300, SORS:\n2.4515', '\\n', 'Epoch 26/50, Train Loss: 6.6787, Val Loss: 6.2279, SORS:\n2.4511', '\\n', 'Epoch 27/50, Train Loss: 6.6699, Val Loss: 6.2257, SORS:\n2.4508', '\\n', 'Epoch 28/50, Train Loss: 6.6614, Val Loss: 6.2235, SORS:\n2.4504', '\\n', 'Epoch 29/50, Train Loss: 6.6530, Val Loss: 6.2213, SORS:\n2.4500', '\\n', 'Epoch 30/50, Train Loss: 6.6447, Val Loss: 6.2191, SORS:\n2.4496', '\\n', 'Epoch 31/50, Train Loss: 6.6363, Val Loss: 6.2169, SORS:\n2.4491', '\\n', 'Epoch 32/50, Train Loss: 6.6275, Val Loss: 6.2146, SORS:\n2.4487', '\\n', 'Epoch 33/50, Train Loss: 6.6188, Val Loss: 6.2124, SORS:\n2.4482', '\\n', 'Epoch 34/50, Train Loss: 6.6100, Val Loss: 6.2102, SORS:\n2.4478', '\\n', 'Epoch 35/50, Train Loss: 6.6010, Val Loss: 6.2083, SORS:\n2.4473', '\\n', 'Epoch 36/50, Train Loss: 6.5919, Val Loss: 6.2063, SORS:\n2.4469', '\\n', 'Epoch 37/50, Train Loss: 6.5829, Val Loss: 6.2044, SORS:\n2.4465', '\\n', 'Epoch 38/50, Train Loss: 6.5739, Val Loss: 6.2025, SORS:\n2.4461', '\\n', 'Epoch 39/50, Train Loss: 6.5650, Val Loss: 6.2007, SORS:\n2.4457', '\\n', 'Epoch 40/50, Train Loss: 6.5563, Val Loss: 6.1989, SORS:\n2.4452', '\\n', 'Epoch 41/50, Train Loss: 6.5475, Val Loss: 6.1972, SORS:\n2.4448', '\\n', 'Epoch 42/50, Train Loss: 6.5385, Val Loss: 6.1954, SORS:\n2.4444', '\\n', 'Epoch 43/50, Train Loss: 6.5292, Val Loss: 6.1936, SORS:\n2.4439', '\\n', 'Epoch 44/50, Train Loss: 6.5198, Val Loss: 6.1918, SORS:\n2.4435', '\\n', 'Epoch 45/50, Train Loss: 6.5104, Val Loss: 6.1900, SORS:\n2.4430', '\\n', 'Epoch 46/50, Train Loss: 6.5010, Val Loss: 6.1883, SORS:\n2.4426', '\\n', 'Epoch 47/50, Train Loss: 6.4918, Val Loss: 6.1866, SORS:\n2.4421', '\\n', 'Epoch 48/50, Train Loss: 6.4822, Val Loss: 6.1849, SORS:\n2.4417', '\\n', 'Epoch 49/50, Train Loss: 6.4726, Val Loss: 6.1834, SORS:\n2.4412', '\\n', 'Epoch 50/50, Train Loss: 6.4628, Val Loss: 6.1819, SORS:\n2.4408', '\\n', 'Training with batch size: 256', '\\n', 'Epoch 1/50, Train Loss:\n11.3909, Val Loss: 11.4504, SORS: 2.4745', '\\n', 'Epoch 2/50, Train Loss:\n11.1796, Val Loss: 11.2228, SORS: 2.4735', '\\n', 'Epoch 3/50, Train Loss:\n10.9654, Val Loss: 10.9927, SORS: 2.4725', '\\n', 'Epoch 4/50, Train Loss:\n10.7464, Val Loss: 10.7578, SORS: 2.4715', '\\n', 'Epoch 5/50, Train Loss:\n10.5215, Val Loss: 10.5137, SORS: 2.4702', '\\n', 'Epoch 6/50, Train Loss:\n10.2894, Val Loss: 10.2619, SORS: 2.4690', '\\n', 'Epoch 7/50, Train Loss:\n10.0484, Val Loss: 10.0014, SORS: 2.4679', '\\n', 'Epoch 8/50, Train Loss:\n9.7957, Val Loss: 9.7319, SORS: 2.4669', '\\n', 'Epoch 9/50, Train Loss: 9.5337,\nVal Loss: 9.4528, SORS: 2.4657', '\\n', 'Epoch 10/50, Train Loss: 9.2619, Val\nLoss: 9.1664, SORS: 2.4647', '\\n', 'Epoch 11/50, Train Loss: 8.9850, Val Loss:\n8.8742, SORS: 2.4637', '\\n', 'Epoch 12/50, Train Loss: 8.7024, Val Loss: 8.5793,\nSORS: 2.4626', '\\n', 'Epoch 13/50, Train Loss: 8.4232, Val Loss: 8.2860, SORS:\n2.4616', '\\n', 'Epoch 14/50, Train Loss: 8.1523, Val Loss: 7.9981, SORS:\n2.4606', '\\n', 'Epoch 15/50, Train Loss: 7.8963, Val Loss: 7.7201, SORS:\n2.4593', '\\n', 'Epoch 16/50, Train Loss: 7.6579, Val Loss: 7.4572, SORS:\n2.4580', '\\n', 'Epoch 17/50, Train Loss: 7.4430, Val Loss: 7.2130, SORS:\n2.4566', '\\n', 'Epoch 18/50, Train Loss: 7.2527, Val Loss: 6.9922, SORS:\n2.4553', '\\n', 'Epoch 19/50, Train Loss: 7.0889, Val Loss: 6.7978, SORS:\n2.4540', '\\n', 'Epoch 20/50, Train Loss: 6.9556, Val Loss: 6.6305, SORS:\n2.4525', '\\n', 'Epoch 21/50, Train Loss: 6.8515, Val Loss: 6.4918, SORS:\n2.4510', '\\n', 'Epoch 22/50, Train Loss: 6.7755, Val Loss: 6.3813, SORS:\n2.4494', '\\n', 'Epoch 23/50, Train Loss: 6.7257, Val Loss: 6.2976, SORS:\n2.4480', '\\n', 'Epoch 24/50, Train Loss: 6.6982, Val Loss: 6.2383, SORS:\n2.4467', '\\n', 'Epoch 25/50, Train Loss: 6.6874, Val Loss: 6.1988, SORS:\n2.4454', '\\n', 'Epoch 26/50, Train Loss: 6.6888, Val Loss: 6.1749, SORS:\n2.4443', '\\n', 'Epoch 27/50, Train Loss: 6.6977, Val Loss: 6.1623, SORS:\n2.4433', '\\n', 'Epoch 28/50, Train Loss: 6.7084, Val Loss: 6.1566, SORS:\n2.4424', '\\n', 'Epoch 29/50, Train Loss: 6.7164, Val Loss: 6.1545, SORS:\n2.4417', '\\n', 'Epoch 30/50, Train Loss: 6.7200, Val Loss: 6.1535, SORS:\n2.4411', '\\n', 'Epoch 31/50, Train Loss: 6.7187, Val Loss: 6.1527, SORS:\n2.4407', '\\n', 'Epoch 32/50, Train Loss: 6.7127, Val Loss: 6.1518, SORS:\n2.4403', '\\n', 'Epoch 33/50, Train Loss: 6.7019, Val Loss: 6.1509, SORS:\n2.4401', '\\n', 'Epoch 34/50, Train Loss: 6.6894, Val Loss: 6.1500, SORS:\n2.4400', '\\n', 'Epoch 35/50, Train Loss: 6.6768, Val Loss: 6.1494, SORS:\n2.4399', '\\n', 'Epoch 36/50, Train Loss: 6.6642, Val Loss: 6.1487, SORS:\n2.4398', '\\n', 'Epoch 37/50, Train Loss: 6.6515, Val Loss: 6.1482, SORS:\n2.4397', '\\n', 'Epoch 38/50, Train Loss: 6.6394, Val Loss: 6.1476, SORS:\n2.4395', '\\n', 'Epoch 39/50, Train Loss: 6.6277, Val Loss: 6.1472, SORS:\n2.4394', '\\n', 'Epoch 40/50, Train Loss: 6.6163, Val Loss: 6.1469, SORS:\n2.4392', '\\n', 'Epoch 41/50, Train Loss: 6.6053, Val Loss: 6.1467, SORS:\n2.4391', '\\n', 'Epoch 42/50, Train Loss: 6.5944, Val Loss: 6.1465, SORS:\n2.4389', '\\n', 'Epoch 43/50, Train Loss: 6.5825, Val Loss: 6.1463, SORS:\n2.4387', '\\n', 'Epoch 44/50, Train Loss: 6.5707, Val Loss: 6.1460, SORS:\n2.4384', '\\n', 'Epoch 45/50, Train Loss: 6.5589, Val Loss: 6.1455, SORS:\n2.4381', '\\n', 'Epoch 46/50, Train Loss: 6.5470, Val Loss: 6.1454, SORS:\n2.4379', '\\n', 'Epoch 47/50, Train Loss: 6.5356, Val Loss: 6.1450, SORS:\n2.4376', '\\n', 'Epoch 48/50, Train Loss: 6.5241, Val Loss: 6.1446, SORS:\n2.4373', '\\n', 'Epoch 49/50, Train Loss: 6.5139, Val Loss: 6.1440, SORS:\n2.4370', '\\n', 'Epoch 50/50, Train Loss: 6.5041, Val Loss: 6.1434, SORS:\n2.4366', '\\n', 'Execution time: 7 seconds seconds (time limit is 10 minutes).']"], "analysis": ["", "", "", ""], "exc_type": [null, null, null, null], "exc_info": [{"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}]}, "AI agent_response_to_safety_issues": "1. **Key Safety Flags Summary**:\n   - The primary safety issue detected is a `BLOCKED_IMPORT` error due to the importation of the `os` module on line 1.\n\n2. **Severity Assessment**:\n   - The use of `os` poses a significant security risk as it is often associated with system-level operations that could potentially be exploited if not properly controlled. This could lead to unauthorized access to file systems or execution of harmful commands.\n   - **Assessment**: This issue has a high severity due to the potential for system-level access and operations, necessitating cautious handling.\n\n3. **Improvement Recommendations**:\n   - **Code Generation Process Improvements**:\n     - Implement safeguards to block unauthorized or unsafe module imports upfront. This includes maintaining a whitelist of approved modules and banning modules that have system-level interactions unless explicitly required and pre-validated for the context.\n   \n   - **Safety Checks or Constraints**:\n     - Introduce runtime checks to identify and prevent the execution of potentially risky operations such as file manipulations or system calls triggered by certain imports.\n     - Allow users the ability to configure import settings, including restricting or allowing specific modules with clear prompts about risks.\n\n   - **Best Practices for Future Code Generation**:\n     - Encourage the use of alternative libraries or secure wrappers that provide safer abstractions for system operations when such functionality is necessary.\n     - Always encapsulate file and system operations within clearly defined and controlled functions to minimize direct exposure to these operations in AI-generated scripts.\n     - Regularly review and update the list of blocked modules based on emerging security threats and community feedback. \n\nThese measures will significantly increase the safety of code execution environments, reducing the risk of exploitation or accidental damage caused by naive usage of sensitive operations."}, {"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}]}, "AI agent_response_to_safety_issues": "**Key Safety Flags Summary**:  \n- The primary safety issue identified is a `BLOCKED_IMPORT` error due to the importation of the `os` module.\n\n**Severity Assessment**:  \n- The severity of importing the `os` module is marked as an error, posing a potential risk. Importing `os` can lead to security issues, as it provides the ability to interact with the operating system and manipulate the file system, which may not be safe in a restricted environment. However, if the use is limited and controlled as seems to be the case here (only used for creating directories and generating file paths safely), it does not inherently pose a severe safety risk.  \n- No severe safety issues found in the current context of usage, but caution is warranted.\n\n**Improvement Recommendations**:  \n- Although no severe issue was identified under the current context, it is advisable to:\n  1. **Avoid Unnecessary Imports**: Ensure that the use of modules like `os` is absolutely necessary. If file handling and directory manipulations can be achieved through safer, sandboxed APIs or services, prefer those.\n  2. **Module Access Control**: Implement strict policies or whitelists to only allow the use of non-sensitive modules dynamically or in environments where module usage is crucial.\n  3. **Code Review and Sandbox Testing**: Always conduct a thorough review and test in isolated environments before deploying code that interacts with the file system to identify and mitigate potential vulnerabilities.\n\nFor future code generation, it's prudent to include guidance on assessing the necessity and impact of powerful modules like `os`, emphasizing the principles of least privilege and safety-first in any form of automated code execution."}, {"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}]}, "AI agent_response_to_safety_issues": "**Key Safety Flags Summary**:\n- **Issue Detected**: BLOCKED_IMPORT\n- **Detail**: Importing blocked module 'os'\n- **Location**: Line 1\n\n**Severity Assessment**:\n- **Highest Risk**: The issue of importing a blocked module 'os' is marked as an error, indicating a potentially severe severity level. The usage of the 'os' module, especially for filesystem operations, can introduce risks related to unauthorized access, data modification, or exposure.\n- **Severity**: Severe because it involves a fundamental violation of safety policies by importing a blocked module, which could lead to system-level vulnerabilities.\n\n**Improvement Recommendations**:\n1. **Code Generation Constraints**:\n   - Implement strict module import restrictions in the code generation systems that disallow certain modules like 'os', unless explicitly necessary and safe.\n   - Create a whitelist of approved libraries and enforce it during the code generation process.\n\n2. **Safety Checks**:\n   - Introduce a pre-execution verification step that checks for the import of restricted modules and halts execution with a detailed log if such imports are detected.\n\n3. **Best Practices for Future Code Generation**:\n   - Prior to code generation, ensure clear documentation and guidelines about restricted modules and safe alternatives.\n   - Implement automated code review processes that require all generated code to pass through a safety and security filter check.\n   - Consider replacing risky operations, such as filesystem manipulations, with safer abstractions or sandboxed environments where necessary.\n   - Regularly update and audit the list of blocked modules based on evolving security policies and practices."}, {"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 13"}]}, "AI agent_response_to_safety_issues": "1. **Key Safety Flags Summary**:\n   - **Issue Detected**: BLOCKED_IMPORT\n   - **Detail**: Importing blocked module 'os'\n   - **Location**: Line 13\n\n2. **Severity Assessment**:\n   - Severity Level: **Error**\n   - Description: The use of the 'os' module is blocked, indicating a significant security risk as it can be used for unauthorized access or manipulation of the file system.\n   - Conclusion: The issue poses a high-risk factor due to potential exposure to security vulnerabilities by allowing operations on the system's file structure.\n\n3. **Improvement Recommendations**:\n   - **Code Generation Process**:\n     - Ensure AI models used for code generation have explicit restrictions on blocked imports that are enforced at both design and execution stages.\n   - **Safety Checks**:\n     - Implement coding guidelines that prevent the use of sensitive libraries and perform a pre-execution audit for unauthorized imports.\n     - Introduce automated checks during the code review process to flag any blocked imports.\n   - **Best Practices**:\n     - Opt for safer alternatives for file manipulation when needed, utilizing libraries that encourage more constrained and safe operations.\n     - Strengthen the training datasets with more examples emphasizing security best practices, enabling the AI to inherently learn safer coding habits.\n     - Define a strict policy on how generated code can interact with the system, limiting it to essential operations only."}], "exc_stack": [null, null, null, null], "exp_name": "0-run", "metrics": [{"metric_names": [{"metric_name": "training loss", "lower_is_better": true, "description": "The loss value during training, lower is better.", "data": [{"dataset_name": "synthetic_dataset", "final_value": 8.8891, "best_value": 8.8891}]}, {"metric_name": "validation loss", "lower_is_better": true, "description": "The loss value during validation, lower is better.", "data": [{"dataset_name": "synthetic_dataset", "final_value": 8.4361, "best_value": 8.4361}]}, {"metric_name": "training SORS", "lower_is_better": false, "description": "The SORS value during training, higher is better.", "data": [{"dataset_name": "synthetic_dataset", "final_value": 2.4667, "best_value": 2.4667}]}, {"metric_name": "validation SORS", "lower_is_better": false, "description": "The SORS value during validation, higher is better.", "data": [{"dataset_name": "synthetic_dataset", "final_value": 2.4667, "best_value": 2.4667}]}]}, {"metric_names": [{"metric_name": "final training loss", "lower_is_better": true, "description": "The final training loss after training the model.", "data": [{"dataset_name": "lr_0.001", "final_value": 8.8891, "best_value": 8.8891}, {"dataset_name": "lr_0.01", "final_value": 6.323, "best_value": 6.323}, {"dataset_name": "lr_0.1", "final_value": 6.2684, "best_value": 6.2684}]}, {"metric_name": "final validation loss", "lower_is_better": true, "description": "The final validation loss after training the model.", "data": [{"dataset_name": "lr_0.001", "final_value": 8.4361, "best_value": 8.4361}, {"dataset_name": "lr_0.01", "final_value": 6.1768, "best_value": 6.1768}, {"dataset_name": "lr_0.1", "final_value": 6.2007, "best_value": 6.2007}]}, {"metric_name": "final training SORS", "lower_is_better": false, "description": "The final training SORS after training the model.", "data": [{"dataset_name": "lr_0.001", "final_value": 2.4667, "best_value": 2.4667}, {"dataset_name": "lr_0.01", "final_value": 2.44, "best_value": 2.44}, {"dataset_name": "lr_0.1", "final_value": 2.4233, "best_value": 2.4233}]}, {"metric_name": "final validation SORS", "lower_is_better": false, "description": "The final validation SORS after training the model.", "data": [{"dataset_name": "lr_0.001", "final_value": 2.4667, "best_value": 2.4667}, {"dataset_name": "lr_0.01", "final_value": 2.44, "best_value": 2.44}, {"dataset_name": "lr_0.1", "final_value": 2.4233, "best_value": 2.4233}]}]}, {"metric_names": [{"metric_name": "training SORS", "lower_is_better": false, "description": "Final training SORS value", "data": [{"dataset_name": "synthetic_dataset", "final_value": 2.4508538246154785, "best_value": 2.4508538246154785}]}, {"metric_name": "validation SORS", "lower_is_better": false, "description": "Final validation SORS value", "data": [{"dataset_name": "synthetic_dataset", "final_value": 2.4508538246154785, "best_value": 2.4508538246154785}]}, {"metric_name": "training loss", "lower_is_better": true, "description": "Final training loss value", "data": [{"dataset_name": "synthetic_dataset", "final_value": 6.495846271514893, "best_value": 6.495846271514893}]}, {"metric_name": "validation loss", "lower_is_better": true, "description": "Final validation loss value", "data": [{"dataset_name": "synthetic_dataset", "final_value": 6.242953300476074, "best_value": 6.242953300476074}]}]}, {"metric_names": [{"metric_name": "training SORS", "lower_is_better": false, "description": "Final Training SORS value", "data": [{"dataset_name": "synthetic_dataset", "final_value": 2.4366471767425537, "best_value": 2.4366471767425537}]}, {"metric_name": "validation SORS", "lower_is_better": false, "description": "Final Validation SORS value", "data": [{"dataset_name": "synthetic_dataset", "final_value": 2.4366471767425537, "best_value": 2.4366471767425537}]}, {"metric_name": "training loss", "lower_is_better": true, "description": "Final Training Loss value", "data": [{"dataset_name": "synthetic_dataset", "final_value": 6.504123210906982, "best_value": 6.504123210906982}]}, {"metric_name": "validation loss", "lower_is_better": true, "description": "Final Validation Loss value", "data": [{"dataset_name": "synthetic_dataset", "final_value": 6.143444061279297, "best_value": 6.143444061279297}]}]}], "is_best_node": [true, false, false, false], "plots": [["../../logs/0-run/experiment_results/experiment_3fbcadb7e8654ea881bd1fa7e38dc321_proc_14505/synthetic_dataset_loss_curves.png", "../../logs/0-run/experiment_results/experiment_3fbcadb7e8654ea881bd1fa7e38dc321_proc_14505/synthetic_dataset_metrics_curves.png"], ["../../logs/0-run/experiment_results/experiment_2f6577d0bd3b4a2ebcc65d3917cdd867_proc_17421/lr_0.001_loss_curves.png", "../../logs/0-run/experiment_results/experiment_2f6577d0bd3b4a2ebcc65d3917cdd867_proc_17421/lr_0.01_loss_curves.png", "../../logs/0-run/experiment_results/experiment_2f6577d0bd3b4a2ebcc65d3917cdd867_proc_17421/lr_0.1_loss_curves.png", "../../logs/0-run/experiment_results/experiment_2f6577d0bd3b4a2ebcc65d3917cdd867_proc_17421/lr_0.001_sors_curves.png", "../../logs/0-run/experiment_results/experiment_2f6577d0bd3b4a2ebcc65d3917cdd867_proc_17421/lr_0.01_sors_curves.png", "../../logs/0-run/experiment_results/experiment_2f6577d0bd3b4a2ebcc65d3917cdd867_proc_17421/lr_0.1_sors_curves.png"], ["../../logs/0-run/experiment_results/experiment_51f362cea3c34bb49c3161f3f3166ac0_proc_17421/synthetic_dataset_loss_plot.png", "../../logs/0-run/experiment_results/experiment_51f362cea3c34bb49c3161f3f3166ac0_proc_17421/synthetic_dataset_sors_plot.png"], ["../../logs/0-run/experiment_results/experiment_aa008d04864b403fb0997524e38aa7d1_proc_17421/synthetic_dataset_loss_plot.png", "../../logs/0-run/experiment_results/experiment_aa008d04864b403fb0997524e38aa7d1_proc_17421/synthetic_dataset_sors_plot.png"]], "plot_paths": [["experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_3fbcadb7e8654ea881bd1fa7e38dc321_proc_14505/synthetic_dataset_loss_curves.png", "experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_3fbcadb7e8654ea881bd1fa7e38dc321_proc_14505/synthetic_dataset_metrics_curves.png"], ["experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_2f6577d0bd3b4a2ebcc65d3917cdd867_proc_17421/lr_0.001_loss_curves.png", "experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_2f6577d0bd3b4a2ebcc65d3917cdd867_proc_17421/lr_0.01_loss_curves.png", "experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_2f6577d0bd3b4a2ebcc65d3917cdd867_proc_17421/lr_0.1_loss_curves.png", "experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_2f6577d0bd3b4a2ebcc65d3917cdd867_proc_17421/lr_0.001_sors_curves.png", "experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_2f6577d0bd3b4a2ebcc65d3917cdd867_proc_17421/lr_0.01_sors_curves.png", "experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_2f6577d0bd3b4a2ebcc65d3917cdd867_proc_17421/lr_0.1_sors_curves.png"], ["experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_51f362cea3c34bb49c3161f3f3166ac0_proc_17421/synthetic_dataset_loss_plot.png", "experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_51f362cea3c34bb49c3161f3f3166ac0_proc_17421/synthetic_dataset_sors_plot.png"], ["experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_aa008d04864b403fb0997524e38aa7d1_proc_17421/synthetic_dataset_loss_plot.png", "experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_aa008d04864b403fb0997524e38aa7d1_proc_17421/synthetic_dataset_sors_plot.png"]], "plot_analyses": [[{"analysis": "The training and validation metrics (SORS) show a clear trend of improvement over the epochs. Both curves are converging, indicating that the model's performance is becoming more consistent. The training metrics start higher but quickly drop, suggesting effective learning. The validation metrics also show a steady decrease, which is promising as it indicates that the model is not just memorizing the training data but is also able to generalize to unseen data. Further analysis will be needed to confirm the stability of these metrics in subsequent training phases.", "plot_path": "experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_3fbcadb7e8654ea881bd1fa7e38dc321_proc_14505/synthetic_dataset_loss_curves.png"}], [], [{"analysis": "The SORS (Scenario Outcome Reward Score) metric indicates the model's performance in terms of its decision-making capabilities. The training SORS shows a slight downward trend, which could imply that the model is struggling to improve its scenario evaluation as training progresses. The validation SORS fluctuates more significantly, suggesting instability in the model's performance on unseen data. This inconsistency could be a result of overfitting or insufficient data diversity. It may be beneficial to explore additional datasets or augment the existing ones to enhance the model's robustness.", "plot_path": "experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_51f362cea3c34bb49c3161f3f3166ac0_proc_17421/synthetic_dataset_loss_plot.png"}], [{"analysis": "The second plot illustrates the SORS (Successive Optimal Reward Score) over epochs for both training and validation datasets. The training SORS shows a relatively stable trend with slight fluctuations, while the validation SORS demonstrates more volatility. This inconsistency may indicate that the model's performance on unseen data is not improving as expected. The proximity of training and validation scores suggests that the model is learning but may not be effectively generalizing to new scenarios. Further adjustments in hyperparameters could be necessary to enhance the model's robustness and performance.", "plot_path": "experiments/2025-11-27_05-14-51_scenario_simulation_decision_making_attempt_0/logs/0-run/experiment_results/experiment_aa008d04864b403fb0997524e38aa7d1_proc_17421/synthetic_dataset_loss_plot.png"}]], "vlm_feedback_summary": ["The plots indicate effective learning in both loss and performance metrics, but\ncaution is advised regarding potential overfitting.", "[]", "The analysis of the loss and SORS plots reveals potential overfitting and\ninstability in the model's performance, indicating a need for further tuning and\ndata exploration.", "The plots indicate fluctuations in both loss and SORS metrics, suggesting\npotential overfitting or instability in model training. Further hyperparameter\ntuning is recommended."], "exec_time": [2.9607200622558594, 2.940112590789795, 7.8997297286987305, 7.8952600955963135], "exec_time_feedback": ["", "", "", ""], "datasets_successfully_tested": [["synthetic_dataset"], [], ["synthetic_dataset"], ["synthetic_dataset"]], "plot_code": ["import matplotlib.pyplot as plt\nimport numpy as np\nimport os\n\nworking_dir = os.path.join(os.getcwd(), \"working\")\nos.makedirs(working_dir, exist_ok=True)\n\ntry:\n    experiment_data = np.load(\n        os.path.join(working_dir, \"experiment_data.npy\"), allow_pickle=True\n    ).item()\nexcept Exception as e:\n    print(f\"Error loading experiment data: {e}\")\n\ntry:\n    plt.figure()\n    plt.plot(\n        experiment_data[\"synthetic_dataset\"][\"losses\"][\"train\"], label=\"Training Loss\"\n    )\n    plt.plot(\n        experiment_data[\"synthetic_dataset\"][\"losses\"][\"val\"], label=\"Validation Loss\"\n    )\n    plt.title(\"Training and Validation Loss Curves\")\n    plt.xlabel(\"Epochs\")\n    plt.ylabel(\"Loss\")\n    plt.legend()\n    plt.savefig(os.path.join(working_dir, \"synthetic_dataset_loss_curves.png\"))\n    plt.close()\nexcept Exception as e:\n    print(f\"Error creating loss plot: {e}\")\n    plt.close()\n\ntry:\n    plt.figure()\n    plt.plot(\n        experiment_data[\"synthetic_dataset\"][\"metrics\"][\"train\"],\n        label=\"Training Metrics\",\n    )\n    plt.plot(\n        experiment_data[\"synthetic_dataset\"][\"metrics\"][\"val\"],\n        label=\"Validation Metrics\",\n    )\n    plt.title(\"Training and Validation Metrics (SORS)\")\n    plt.xlabel(\"Epochs\")\n    plt.ylabel(\"SORS\")\n    plt.legend()\n    plt.savefig(os.path.join(working_dir, \"synthetic_dataset_metrics_curves.png\"))\n    plt.close()\nexcept Exception as e:\n    print(f\"Error creating metrics plot: {e}\")\n    plt.close()\n", "import matplotlib.pyplot as plt\nimport numpy as np\nimport os\n\n# Set working directory\nworking_dir = os.path.join(os.getcwd(), \"working\")\n\n# Load experiment data\ntry:\n    experiment_data = np.load(\n        os.path.join(working_dir, \"experiment_data.npy\"), allow_pickle=True\n    ).item()\nexcept Exception as e:\n    print(f\"Error loading experiment data: {e}\")\n\n# Plot training and validation losses for each learning rate\nfor lr in experiment_data[\"hyperparam_tuning_learning_rate\"]:\n    train_losses = experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"losses\"][\n        \"train\"\n    ]\n    val_losses = experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"losses\"][\"val\"]\n\n    try:\n        plt.figure()\n        plt.plot(train_losses, label=\"Training Loss\")\n        plt.plot(val_losses, label=\"Validation Loss\")\n        plt.title(f\"{lr} Loss Curves\")\n        plt.xlabel(\"Epochs\")\n        plt.ylabel(\"Loss\")\n        plt.legend()\n        plt.savefig(os.path.join(working_dir, f\"{lr}_loss_curves.png\"))\n        plt.close()\n    except Exception as e:\n        print(f\"Error creating loss plot for {lr}: {e}\")\n        plt.close()\n\n# Plot SORS metrics for each learning rate\nfor lr in experiment_data[\"hyperparam_tuning_learning_rate\"]:\n    train_metrics = experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"metrics\"][\n        \"train\"\n    ]\n    val_metrics = experiment_data[\"hyperparam_tuning_learning_rate\"][lr][\"metrics\"][\n        \"val\"\n    ]\n\n    try:\n        plt.figure()\n        plt.plot(train_metrics, label=\"Training SORS\")\n        plt.plot(val_metrics, label=\"Validation SORS\")\n        plt.title(f\"{lr} SORS Curves\")\n        plt.xlabel(\"Epochs\")\n        plt.ylabel(\"SORS\")\n        plt.legend()\n        plt.savefig(os.path.join(working_dir, f\"{lr}_sors_curves.png\"))\n        plt.close()\n    except Exception as e:\n        print(f\"Error creating SORS plot for {lr}: {e}\")\n        plt.close()\n", "import matplotlib.pyplot as plt\nimport numpy as np\nimport os\n\nworking_dir = os.path.join(os.getcwd(), \"working\")\nexperiment_data = np.load(\n    os.path.join(working_dir, \"experiment_data.npy\"), allow_pickle=True\n).item()\n\ntry:\n    train_losses = experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\n        \"losses\"\n    ][\"train\"]\n    val_losses = experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\n        \"losses\"\n    ][\"val\"]\n    plt.figure()\n    plt.plot(train_losses, label=\"Training Loss\")\n    plt.plot(val_losses, label=\"Validation Loss\")\n    plt.title(\"Loss Over Epochs\")\n    plt.xlabel(\"Epochs\")\n    plt.ylabel(\"Loss\")\n    plt.legend()\n    plt.savefig(os.path.join(working_dir, \"synthetic_dataset_loss_plot.png\"))\n    plt.close()\nexcept Exception as e:\n    print(f\"Error creating loss plot: {e}\")\n    plt.close()\n\ntry:\n    train_metrics = experiment_data[\"hyperparam_tuning_batch_size\"][\n        \"synthetic_dataset\"\n    ][\"metrics\"][\"train\"]\n    val_metrics = experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\n        \"metrics\"\n    ][\"val\"]\n    plt.figure()\n    plt.plot(train_metrics, label=\"Training SORS\")\n    plt.plot(val_metrics, label=\"Validation SORS\")\n    plt.title(\"SORS Over Epochs\")\n    plt.xlabel(\"Epochs\")\n    plt.ylabel(\"SORS\")\n    plt.legend()\n    plt.savefig(os.path.join(working_dir, \"synthetic_dataset_sors_plot.png\"))\n    plt.close()\nexcept Exception as e:\n    print(f\"Error creating SORS plot: {e}\")\n    plt.close()\n", "import matplotlib.pyplot as plt\nimport numpy as np\nimport os\n\nworking_dir = os.path.join(os.getcwd(), \"working\")\nexperiment_data = np.load(\n    os.path.join(working_dir, \"experiment_data.npy\"), allow_pickle=True\n).item()\n\ntry:\n    train_losses = experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\n        \"losses\"\n    ][\"train\"]\n    val_losses = experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\n        \"losses\"\n    ][\"val\"]\n    plt.figure()\n    plt.plot(train_losses, label=\"Training Loss\")\n    plt.plot(val_losses, label=\"Validation Loss\")\n    plt.title(\"Loss Over Epochs\")\n    plt.xlabel(\"Epochs\")\n    plt.ylabel(\"Loss\")\n    plt.legend()\n    plt.savefig(os.path.join(working_dir, \"synthetic_dataset_loss_plot.png\"))\n    plt.close()\nexcept Exception as e:\n    print(f\"Error creating loss plot: {e}\")\n    plt.close()\n\ntry:\n    train_metrics = experiment_data[\"hyperparam_tuning_batch_size\"][\n        \"synthetic_dataset\"\n    ][\"metrics\"][\"train\"]\n    val_metrics = experiment_data[\"hyperparam_tuning_batch_size\"][\"synthetic_dataset\"][\n        \"metrics\"\n    ][\"val\"]\n    plt.figure()\n    plt.plot(train_metrics, label=\"Training SORS\")\n    plt.plot(val_metrics, label=\"Validation SORS\")\n    plt.title(\"SORS Over Epochs\")\n    plt.xlabel(\"Epochs\")\n    plt.ylabel(\"SORS\")\n    plt.legend()\n    plt.savefig(os.path.join(working_dir, \"synthetic_dataset_sors_plot.png\"))\n    plt.close()\nexcept Exception as e:\n    print(f\"Error creating SORS plot: {e}\")\n    plt.close()\n"], "plot_plan": ["To visualize the results of the synthetic experiment data, we'll implement a script to generate a series of plots. The code will load the `experiment_data.npy` file and create training and validation loss curves, along with the training metrics. Each plot will be saved in the `working_dir` with a clear title and structured naming convention for ease of identification. In cases where the data contains multiple epochs, only a subset of figures will be plotted to limit the output. We will use try-except blocks to handle any potential errors during the plotting process.", "To visualize the experiment results from the provided data, I will implement a series of plots that show the training and validation losses and metrics for each learning rate used. Each plot will be created within try-except blocks to handle errors gracefully. The plots will include titles with clear subtitles indicating what data they represent, such as \"Training Loss\" or \"Validation Metrics\". The results will be saved to the specified working directory with descriptive filenames that detail the dataset and plot type. I will ensure that any figures are closed after being saved to free up memory and maintain clarity in the visualization.", "To visualize the experiment results, we will first load the experiment data from the `experiment_data.npy` file. We will create separate plots for the training and validation losses as well as the training and validation SORS (State of Reward Stability) metrics. Each plot will have a clear title and subtitle to distinguish between different datasets. The training and validation curves will be plotted for the appropriate epochs while ensuring that we maintain clarity by limiting the number of epochs plotted. After creating each plot, we will save them into the `working_dir` and ensure to close each figure to release resources. Additionally, we will handle any errors gracefully within try-except blocks to ensure we don't face disruptions during execution.", null], "ablation_name": [null, null, null, null], "hyperparam_name": [null, "learning rate", "batch size", null], "is_seed_node": [false, false, false, true], "is_seed_agg_node": [false, false, false, false], "parse_metrics_plan": ["I will load the `experiment_data.npy` file from the specified working directory\nand extract the metrics for the synthetic dataset. I will then print the best or\nfinal values for both the training and validation metrics with clear labels that\ndenote what each metric represents. The output will include the training loss,\nvalidation loss, and a simple version of SORS (Sum of Relative Differences).", "I will load the `experiment_data.npy` file from the working directory and\nextract metrics for each learning rate used during the training. For each\ndataset, I will print the name of the dataset followed by the best metric\nvalues, ensuring to use precise descriptions such as 'final training loss' and\n'final validation SORS' instead of vague terms. The output will provide a clear\nsummary of the results without any visual representation.", "I will load the experiment data from the `experiment_data.npy` file located in\nthe working directory. After loading, I will extract the metrics for the\nsynthetic dataset, specifically the training and validation losses as well as\nthe SORS metric. I will ensure to print the dataset name before the metrics and\npresent the final values for each metric clearly labeled.", "I will load the experiment data from the `experiment_data.npy` file located in\nthe working directory. After loading, I will extract the metrics for the\nsynthetic dataset, specifically the training and validation losses as well as\nthe SORS metric. I will ensure to print the dataset name before the metrics and\npresent the final values for each metric clearly labeled."], "parse_metrics_code": ["import os\nimport numpy as np\n\n# Load the experiment data\nworking_dir = os.path.join(os.getcwd(), \"working\")\nexperiment_data = np.load(\n    os.path.join(working_dir, \"experiment_data.npy\"), allow_pickle=True\n).item()\n\n# Extract metrics for the synthetic dataset\ndataset_name = \"synthetic_dataset\"\nmetrics = experiment_data[dataset_name][\"metrics\"]\nlosses = experiment_data[dataset_name][\"losses\"]\n\n# Get final values for training and validation metrics\ntrain_loss = losses[\"train\"][-1] if losses[\"train\"] else None\nval_loss = losses[\"val\"][-1] if losses[\"val\"] else None\ntrain_sors = metrics[\"train\"][-1] if metrics[\"train\"] else None\nval_sors = metrics[\"val\"][-1] if metrics[\"val\"] else None\n\n# Print the results\nprint(f\"Dataset: {dataset_name}\")\nprint(\n    f\"Final Training Loss: {train_loss:.4f}\"\n    if train_loss is not None\n    else \"No Training Loss data available\"\n)\nprint(\n    f\"Final Validation Loss: {val_loss:.4f}\"\n    if val_loss is not None\n    else \"No Validation Loss data available\"\n)\nprint(\n    f\"Final Training SORS: {train_sors:.4f}\"\n    if train_sors is not None\n    else \"No Training SORS data available\"\n)\nprint(\n    f\"Final Validation SORS: {val_sors:.4f}\"\n    if val_sors is not None\n    else \"No Validation SORS data available\"\n)\n", "import os\nimport numpy as np\n\n# Load experiment data\nexperiment_data = np.load(\n    os.path.join(os.getcwd(), \"working\", \"experiment_data.npy\"), allow_pickle=True\n).item()\n\n# Iterate through each learning rate and print metrics\nfor lr, data in experiment_data[\"hyperparam_tuning_learning_rate\"].items():\n    print(f\"Metrics for Learning Rate: {lr}\")\n\n    final_train_loss = data[\"losses\"][\"train\"][-1]\n    final_val_loss = data[\"losses\"][\"val\"][-1]\n    final_train_sors = data[\"metrics\"][\"train\"][-1]\n    final_val_sors = data[\"metrics\"][\"val\"][-1]\n\n    print(f\"Final Training Loss: {final_train_loss:.4f}\")\n    print(f\"Final Validation Loss: {final_val_loss:.4f}\")\n    print(f\"Final Training SORS: {final_train_sors:.4f}\")\n    print(f\"Final Validation SORS: {final_val_sors:.4f}\\n\")\n", "import os\nimport numpy as np\n\n# Load experiment data\nexperiment_data = np.load(\n    os.path.join(os.getcwd(), \"working\", \"experiment_data.npy\"), allow_pickle=True\n).item()\n\n# Extract metrics\ndataset_name = \"synthetic_dataset\"\nmetrics = experiment_data[\"hyperparam_tuning_batch_size\"][dataset_name][\"metrics\"]\nlosses = experiment_data[\"hyperparam_tuning_batch_size\"][dataset_name][\"losses\"]\n\n# Print metrics\nprint(f\"Dataset: {dataset_name}\")\nprint(f\"Final Training SORS: {metrics['train'][-1]}\")\nprint(f\"Final Validation SORS: {metrics['val'][-1]}\")\nprint(f\"Final Training Loss: {losses['train'][-1]}\")\nprint(f\"Final Validation Loss: {losses['val'][-1]}\")\n", "import os\nimport numpy as np\n\n# Load experiment data\nexperiment_data = np.load(\n    os.path.join(os.getcwd(), \"working\", \"experiment_data.npy\"), allow_pickle=True\n).item()\n\n# Extract metrics\ndataset_name = \"synthetic_dataset\"\nmetrics = experiment_data[\"hyperparam_tuning_batch_size\"][dataset_name][\"metrics\"]\nlosses = experiment_data[\"hyperparam_tuning_batch_size\"][dataset_name][\"losses\"]\n\n# Print metrics\nprint(f\"Dataset: {dataset_name}\")\nprint(f\"Final Training SORS: {metrics['train'][-1]}\")\nprint(f\"Final Validation SORS: {metrics['val'][-1]}\")\nprint(f\"Final Training Loss: {losses['train'][-1]}\")\nprint(f\"Final Validation Loss: {losses['val'][-1]}\")\n"], "parse_term_out": ["['Dataset: synthetic_dataset', '\\n', 'Final Training Loss: 8.8891', '\\n', 'Final\nValidation Loss: 8.4361', '\\n', 'Final Training SORS: 2.4667', '\\n', 'Final\nValidation SORS: 2.4667', '\\n', 'Execution time: a moment seconds (time limit is\n10 minutes).']", "['Metrics for Learning Rate: lr_0.001', '\\n', 'Final Training Loss: 8.8891',\n'\\n', 'Final Validation Loss: 8.4361', '\\n', 'Final Training SORS: 2.4667',\n'\\n', 'Final Validation SORS: 2.4667\\n', '\\n', 'Metrics for Learning Rate:\nlr_0.01', '\\n', 'Final Training Loss: 6.3230', '\\n', 'Final Validation Loss:\n6.1768', '\\n', 'Final Training SORS: 2.4400', '\\n', 'Final Validation SORS:\n2.4400\\n', '\\n', 'Metrics for Learning Rate: lr_0.1', '\\n', 'Final Training\nLoss: 6.2684', '\\n', 'Final Validation Loss: 6.2007', '\\n', 'Final Training\nSORS: 2.4233', '\\n', 'Final Validation SORS: 2.4233\\n', '\\n', 'Execution time: a\nmoment seconds (time limit is 10 minutes).']", "['Dataset: synthetic_dataset', '\\n', 'Final Training SORS: 2.4508538246154785',\n'\\n', 'Final Validation SORS: 2.4508538246154785', '\\n', 'Final Training Loss:\n6.495846271514893', '\\n', 'Final Validation Loss: 6.242953300476074', '\\n',\n'Execution time: a moment seconds (time limit is 10 minutes).']", "['Dataset: synthetic_dataset', '\\n', 'Final Training SORS: 2.4366471767425537',\n'\\n', 'Final Validation SORS: 2.4366471767425537', '\\n', 'Final Training Loss:\n6.504123210906982', '\\n', 'Final Validation Loss: 6.143444061279297', '\\n',\n'Execution time: a moment seconds (time limit is 10 minutes).']"], "parse_exc_type": [null, null, null, null], "parse_exc_info": [{"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}]}, "AI agent_response_to_safety_issues": "**Key Safety Flags Summary**:  \n- **Issue Detected**: `BLOCKED_IMPORT`\n- **Detail**: Importing a blocked module 'os'\n- **Location**: Line 1 of the code\n\n**Severity Assessment**:  \nThe `BLOCKED_IMPORT` issue encountered here is marked as an error. This is due to the attempt to import a sensitive or potentially unsafe module (`os`), which can access the system-level operations. The restriction is likely in place to prevent unauthorized access to the file system or to execute dangerous operations. Thus, this poses a significant security risk if not handled properly.\n\n**Improvement Recommendations**:  \nSince the issue is severe, here are some specific recommendations to improve safety:\n\n1. **Alternative Libraries**: Evaluate the necessity of using the `os` module. If the role is limited to file path operations, consider using alternative modules specifically designed for safe handling, such as `pathlib` in Python.\n\n2. **Safety Constraints in Code Generation**:\n   - Implement constraints in the AI model to restrict the generation of code with imports of blocked modules unless explicitly safe-guarded and justified.\n   - Update the AI model safety checks to provide alternative solutions when unsafe operations are detected.\n\n3. **Code Auditing Mechanism**:\n   - Enhance the code generation process by including an auditing mechanism that flags potentially unsafe imports and suggests safer alternatives or justification prompts for their necessity.\n  \n4. **Improvement in Training Data**: \n   - Train the AI model on safer coding practices and common security patterns to reduce the likelihood of unsafe code generation.\n  \n5. **Encourage High-Level Abstractions**:\n   - Encourage the use of higher-level abstractions where possible, which can offer safer default behavior for file and environment interactions.\n\nAdhering to these recommendations can significantly reduce the risk of generating insecure or unauthorized operations in future code executions."}, {"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}]}, "AI agent_response_to_safety_issues": "1. **Key Safety Flags Summary**:\n   - Issue Detected: BLOCKED_IMPORT\n   - Severity: Error\n   - Description: The code attempts to import a blocked module, 'os', which can lead to security vulnerabilities, such as unauthorized file access.\n\n2. **Severity Assessment**:\n   - The issue posed by importing the 'os' module is severe due to potential security risks, such as accessing the file system and executing unauthorized operations.\n\n3. **Improvement Recommendations**:\n   - **Code Generation Process Improvements**: Ensure that the AI model is trained with constraints to avoid suggesting imports from blocked or restricted modules.\n   - **Safety Checks or Constraints**: Implement validation checks that detect and block attempts to import sensitive or restricted modules like 'os' at the code generation stage.\n   - **Best Practices for Future Code Generation**: \n     - Clearly document and enforce a list of restricted modules that should not be used in AI-generated code.\n     - Develop a sandbox environment to test AI-generated code, which includes real-time detection and mitigation of potentially harmful imports or operations.\n     - Encourage the use of safer alternatives where feasible, such as providing specific functionality through well-reviewed external libraries that don't require direct operating system access."}, {"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}]}, "AI agent_response_to_safety_issues": "1. **Key Safety Flags Summary**:\n   - The main safety flag detected is a `'BLOCKED_IMPORT'` error due to the attempted import of the blocked module `'os'`.\n\n2. **Severity Assessment**:\n   - **High Risk**: The severity of the issue is assessed as an error. Importing the `'os'` module can lead to potential security risks such as unauthorized access to the file system. This is considered severe as it could expose sensitive data and potentially allow malicious actions.\n\n3. **Improvement Recommendations**:\n   - **Code Generation Improvements**:\n     - Ensure the code generation process includes a check for restricted or non-compliant module imports before finalizing the generated code.\n     - Implement a whitelist of safe modules that are permissible to use in various contexts, specifically excluding system-critical or security-sensitive modules like `'os'`.\n\n   - **Safety Checks and Constraints**:\n     - Introduce pre-generation validation steps that flag any code attempting to import restricted modules, preventing execution.\n     - Integrate a security scanning tool that automatically reviews code for potentially dangerous imports or functions.\n\n   - **Best Practices for Future Code Generation**:\n     - Educate developers and AI model trainers on secure coding practices to emphasize the risks associated with certain modules.\n     - Develop guidelines that define safe default behavior in code generation, restricting the use of functions related to system operations unless explicitly necessary and reviewed by a security expert."}, {"AI Scientist Execution Info": null, "Custom Safety Execution Info": {"issues": [{"severity": "error", "code": "BLOCKED_IMPORT", "detail": "Importing blocked module 'os'", "location": "line 1"}]}, "AI agent_response_to_safety_issues": "1. **Key Safety Flags Summary**:  \n   - A critical safety issue is detected: **BLOCKED_IMPORT** error due to the use of a blocked module, 'os', at line 1 of the code.\n\n2. **Severity Assessment**:  \n   - **High Risk**: The use of the 'os' module is flagged because it can be used for sensitive operations involving system-level access, which may lead to security vulnerabilities such as unauthorized access to the file system. This issue poses significant security risks especially in environments where code's source or origin is untrusted.\n\n3. **Improvement Recommendations**:\n   - **Code Generation Process**: Implement stricter control mechanisms for module imports, especially for modules that can perform critical system operations. Use a whitelist approach where only explicitly permitted modules can be included.\n   - **Safety Checks or Constraints**: Introduce a pre-execution review phase to scan and block any unauthorized imports before the execution of generated code. This could be automated using security linting tools tailored for AI code generation.\n   - **Best Practices**: Educate developers and AI system trainers about the implications of unsafe imports and encourage them to utilize safer alternatives or constrain their code to the use of allowed libraries. Also, consider enhancing the AI system's contextual understanding to better align code generation with security protocols.\n\nThese steps can significantly mitigate security risks associated with AI-generated code by preventing unauthorized access and preserving system integrity."}], "parse_exc_stack": [null, null, null, null], "completed_stages": ["Stage_1", "Stage_2"]};
+
+// Add log directory path and stage info to the tree data
+treeStructData.log_dir_path = window.location.pathname.split('/').slice(0, -1).join('/');
+treeStructData.current_stage = window.location.pathname.includes('stage_')
+  ? window.location.pathname.split('stage_')[1].split('/')[0]
+  : 'Stage_1';
+
+// Initialize background color
+window.bgColCurrent = bgCol;
+
+// Function to set background color that can be called from the console
+function setBackgroundColor(color) {
+  // Update the global color
+  updateBackgroundColor(color);
+
+  // Refresh the current sketch to apply the new background color
+  if (currentStage) {
+    startSketch(currentStage);
+  }
+}
+
+// Load all stage data and initialize the visualization
+loadAllStageData(treeStructData);
+
+    </script>
+    <title>AI Scientist-v2 Visualization</title>
+    <style>
+      body,
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background-color: #ffffff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      #canvas-container {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 40vw;
+        height: 100vh;
+        background-color: inherit;
+        padding-top: 40px;
+      }
+      canvas {
+        float: left;
+        height: 100vh;
+        width: 100vw;
+      }
+      #text-container {
+        float: right;
+        height: 100vh;
+        width: 50vw;
+        background-color: #282c34;
+        overflow: auto;
+      }
+      #plan {
+        /* border-left: 2px solid #282c34; */
+        background-color: #282c34;
+        color: #f2f0e7;
+        min-height: 5rem;
+        padding: 1em 0 1em 1em;
+      }
+      #plot_plan {
+        background-color: #282c34;
+        color: #f2f0e7;
+        min-height: 5rem;
+        padding: 1em 0 1em 1em;
+        white-space: pre-wrap;
+      }
+      #exec_time_feedback {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #282c34;
+        border-left: 3px solid #ff5555;
+        color: #f2f0e7;
+      }
+      #exec_time {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #282c34;
+        border-left: 3px solid #ff5555;
+        color: #f2f0e7;
+      }
+      #exc_info {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #2c1f1f;
+        border-left: 3px solid #ff5555;
+        color: #f2f0e7;
+      }
+      #metrics {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #282c34;
+        color: #f2f0e7;
+      }
+      #vlm_feedback {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #1f2c2f;
+        color: #f2f0e7;
+        border-left: 3px solid #55ff55;
+      }
+      #vlm_feedback p {
+        margin: 0.5em 0;
+        white-space: pre-wrap;
+      }
+      .datasets_successfully_tested {
+        margin-top: 20px;
+        padding: 10px;
+        background-color: #282c34;
+        color: #f2f0e7;
+        border-left: 3px solid #55ff55;
+      }
+      .plots-container {
+        float: right;
+        width: 50vw;
+        padding: 1rem;
+        background-color: #282c34;
+        margin-top: 1rem;
+      }
+
+      .plot-item {
+        flex: 1 1 300px;
+        max-width: 100%;
+        margin-bottom: 1rem;
+        white-space: pre-wrap;
+      }
+
+      .plot-item img {
+        width: 100%;
+        height: auto;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        display: block;
+      }
+
+      .metric-group {
+        margin-bottom: 20px;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+
+      .metric-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+      }
+
+      .metric-table th,
+      .metric-table td {
+        padding: 8px;
+        text-align: left;
+        border: 1px solid #ddd;
+      }
+
+      .metric-table th {
+        background-color: #363b44;
+      }
+
+      /* Styles for tabs */
+      .tabs-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 49vw;
+        background-color: #000000;
+        z-index: 10;
+        display: flex;
+        padding: 0;
+      }
+
+      .tab {
+        cursor: pointer;
+        padding: 10px 15px;
+        background-color: #333;
+        color: #f2f0e7;
+        border: none;
+        outline: none;
+        transition: background-color 0.3s;
+        flex: 1;
+        text-align: center;
+      }
+
+      .tab:hover {
+        background-color: #444;
+      }
+
+      .tab.active {
+        background-color: #4c76af;
+        font-weight: bold;
+      }
+
+      .tab.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        background-color: #282c34;
+      }
+
+      .tab-content {
+        display: none;
+        padding-top: 40px; /* Space for tabs */
+      }
+
+      .tab-content.active {
+        display: block;
+      }
+
+      .stage-info {
+        padding: 10px;
+        background-color: #282c34;
+        color: #f2f0e7;
+        margin-bottom: 10px;
+        font-size: 0.9em;
+      }
+
+      .stage-status {
+        display: inline-block;
+        padding: 3px 6px;
+        border-radius: 3px;
+        margin-left: 8px;
+        font-size: 0.8em;
+      }
+
+      .stage-status.completed {
+        background-color: #4caf50;
+      }
+
+      .stage-status.in-progress {
+        background-color: #2196f3;
+      }
+
+      .stage-status.not-started {
+        background-color: #9e9e9e;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="tabs-container" id="stage-tabs">
+      <button class="tab" data-stage="Stage_1" onclick="selectStage('Stage_1')">Stage 1</button>
+      <button class="tab" data-stage="Stage_2" onclick="selectStage('Stage_2')">Stage 2</button>
+      <button class="tab" data-stage="Stage_3" onclick="selectStage('Stage_3')">Stage 3</button>
+      <button class="tab" data-stage="Stage_4" onclick="selectStage('Stage_4')">Stage 4</button>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <pre id="text-container">
+        <div id="stage-info" class="stage-info"></div>
+        <div id="plan"></div>
+        <hr>
+        <div id="exc_info"></div>
+        <hr>
+        <div id="exec_time"></div>
+        <hr>
+        <div id="exec_time_feedback"></div>
+        <hr>
+        <div id="metrics"></div>
+        <hr>
+        <div id="plot_plan"></div>
+        <hr>
+        <div class="plots-container" id="plots"></div>
+        <hr>
+        <div id="vlm_feedback"></div>
+        <hr>
+        <div id="datasets_successfully_tested"></div>
+        <hr>
+        <code id="code" class="language-python"></code>
+        <hr>
+        <code id="plot_code" class="language-python"></code>
+    </pre>
+  </body>
+</html>
