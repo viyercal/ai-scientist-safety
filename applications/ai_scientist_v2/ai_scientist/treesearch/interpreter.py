@@ -246,10 +246,9 @@ class Interpreter:
             ExecutionResult: Object containing the output and metadata of the code execution.
 
         """
-        
+        safety_meta: dict | None = None
         # --- SAFETY GATE: static analysis before any child process is created ---
         safety_report: SafetyReport = analyze_code_str(code, SAFETY_CONFIG)
-
         # If there are *any* issues but we still decided to allow execution,
         # warn the user and give a 15-second window to interrupt.
         if safety_report.issues:
@@ -261,7 +260,17 @@ class Interpreter:
                 for issue in safety_report.issues
             ]
             issues_text = "\n".join(issues_lines)
-
+            safety_meta = {
+                "issues": [
+                    {
+                        "severity": i.severity,
+                        "code": i.code,
+                        "detail": i.detail,
+                        "location": i.location,
+                    }
+                    for i in safety_report.issues
+                ]
+            }
             # Show a truncated view of the code that will be executed
             code_lines = code.splitlines()
             max_lines = 20
@@ -280,21 +289,10 @@ class Interpreter:
             print("-------------------------------------------------------------------------------")
             print(
                 "\nIf you want to STOP, press Ctrl+C / interrupt the cell NOW.\n"
-                "Otherwise execution will continue in 5 seconds..."
+                f"Otherwise execution will continue in {SAFETY_CONFIG.confirm_timeout_sec} seconds..."
             )
             sys.stdout.flush()
-            time.sleep(5)
-            safety_meta = {
-                "issues": [
-                    {
-                        "severity": i.severity,
-                        "code": i.code,
-                        "detail": i.detail,
-                        "location": i.location,
-                    }
-                    for i in safety_report.issues
-                ]
-            }
+            time.sleep(SAFETY_CONFIG.confirm_timeout_sec)
         logger.debug(f"REPL is executing code (reset_session={reset_session})")
 
         if reset_session:
@@ -382,9 +380,9 @@ class Interpreter:
             output.append(
                 f"Execution time: {humanize.naturaldelta(exec_time)} seconds (time limit is {humanize.naturaldelta(self.timeout)})."
             )
-        if safety_meta:
-          basic_exc_info = exc_info
-          exc_info = {
+        basic_exc_info = exc_info
+        if safety_meta is not None:
+            exc_info = {
             "AI Scientist Execution Info": basic_exc_info,
             "Custom Safety Execution Info": safety_meta
           }

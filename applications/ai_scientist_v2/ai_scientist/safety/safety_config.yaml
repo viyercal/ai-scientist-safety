@@ -1,5 +1,5 @@
 blocked_modules:
-  - os
+  #- os # allowed
   - subprocess
   - socket
   - shutil

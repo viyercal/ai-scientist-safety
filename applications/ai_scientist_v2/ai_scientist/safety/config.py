@@ -28,7 +28,7 @@ class SafetyConfig:
     # NOTE: os is intentionally NOT blocked
     blocked_modules: List[str] = field(
         default_factory=lambda: [
-            "os",   # allowed
+            #"os",   # allowed
             "subprocess",
             "socket",
             "shutil",
