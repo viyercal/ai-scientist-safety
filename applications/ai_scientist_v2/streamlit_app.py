@@ -110,6 +110,11 @@ Edit `ai_scientist/safety/safety_config.yaml` to change:
 - `confirm_timeout_sec` (wait time when issues found)
 """)
 
+# Display options
+st.sidebar.markdown("---")
+st.sidebar.subheader("📊 Display Options")
+show_exc_info = st.sidebar.checkbox("Show exc_info Details", value=False, help="Display the full exc_info dictionary from interpreter.run() results")
+
 st.sidebar.markdown("---")
 st.sidebar.subheader("Quick Tests")
 col_a, col_b = st.sidebar.columns(2)
@@ -389,7 +394,7 @@ with col1:
     )
     run_code = st.button("▶️ Run Code")
 
-def render_result(label: str, res: Dict[str, Any]):
+def render_result(label: str, res: Dict[str, Any], show_exc_info: bool = False):
     st.markdown(f"### {label}")
     cols = st.columns(3)
     with cols[0]:
@@ -424,9 +429,16 @@ def render_result(label: str, res: Dict[str, Any]):
     if res.get("exception"):
         st.error(f"Exception: {res['exception']}")
 
-    if res.get("raw_exc_info"):
-        with st.expander("Raw Exception Info"):
-            st.code(str(res["raw_exc_info"]))
+    # Show exc_info if toggle is enabled
+    if show_exc_info and res.get("raw_exc_info"):
+        with st.expander("📋 Exception Info (exc_info)", expanded=True):
+            exc_info = res["raw_exc_info"]
+            if isinstance(exc_info, dict):
+                # Pretty print dictionary
+                st.json(exc_info)
+            else:
+                # For string or other types, show as code
+                st.code(str(exc_info), language="python")
 
 def guess_test_file(name: str) -> Optional[Path]:
     candidates = [
@@ -445,7 +457,7 @@ def run_test_file(path: Path) -> Dict[str, Any]:
 
 if run_code:
     res = run_with_interpreter(code_demo)
-    render_result("Ad hoc Code Run", res)
+    render_result("Ad hoc Code Run", res, show_exc_info)
 
 if run_safe:
     p = guess_test_file("test_safe")
@@ -455,7 +467,7 @@ if run_safe:
     else:
         st.warning("Could not find test_safe.py; running a built-in safe snippet.")
         res = run_with_interpreter("print('hello from safe test'); y = sum([1,2,3]); print('y=', y)")
-    render_result("Safe Test Result", res)
+    render_result("Safe Test Result", res, show_exc_info)
 
 if run_unsafe:
     p = guess_test_file("test_unsafe")
@@ -465,7 +477,7 @@ if run_unsafe:
     else:
         st.warning("Could not find test_unsafe.py; running a built-in UNSAFE snippet.")
         res = run_with_interpreter("import subprocess\nsubprocess.call(['echo','hi'])")
-    render_result("Unsafe Test Result", res)
+    render_result("Unsafe Test Result", res, show_exc_info)
 
 st.markdown("---")
 with st.expander("📐 Architecture (high-level)", expanded=False):
