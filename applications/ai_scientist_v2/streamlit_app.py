@@ -16,16 +16,9 @@ st.set_page_config(page_title="AI Scientist v2 — Safety Demo", layout="wide")
 st.markdown("# 🧪 AI Scientist v2 — Safety Layer Demo")
 
 
-# ---------------------------
-# Compute repo root automatically
-# Expected location of this file:
-#   <repo_root>/applications/ai_scientist_v2/streamlit_app.py
-# We want sys.path to include <repo_root> so that imports like
-#   applications.ai_scientist_v2.ai_scientist.treesearch.interpreter
-# are resolvable.
+
 # ---------------------------
 this_file = Path(__file__).resolve()
-# repo_root = parents[2] because:
 #   parents[0] = applications/ai_scientist_v2
 #   parents[1] = applications
 #   parents[2] = <repo_root>
@@ -34,15 +27,11 @@ repo_root = this_file.parents[2]
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
-# Also expose override in sidebar, in case layout differs.
 user_root = st.sidebar.text_input("Override repo root (optional)", value=str(repo_root))
 if user_root and Path(user_root).exists():
     if user_root not in sys.path:
         sys.path.insert(0, user_root)
 
-# ---------------------------
-# Attempt imports
-# ---------------------------
 Interpreter = None
 SafetyConfig = None
 build_default_safety = None
@@ -69,9 +58,7 @@ if safety_mod is not None:
 
 has_repo = Interpreter is not None and (SafetyConfig is not None or build_default_safety is not None)
 
-# ---------------------------
 # Sidebar — Safety Controls
-# ---------------------------
 st.sidebar.header("⚙️ Safety Controls")
 
 enforce_hard_gate = st.sidebar.checkbox("Enforce hard safety gate", value=True)
@@ -86,9 +73,7 @@ col_a, col_b = st.sidebar.columns(2)
 run_safe = col_a.button("Run Safe Test")
 run_unsafe = col_b.button("Run Unsafe Test")
 
-# ---------------------------
 # Summary of key changes
-# ---------------------------
 with st.expander("🔑 Key Changes to the Sakana AI Repository (summary)", expanded=True):
     st.markdown("""
 **1) Safety Module** — `ai_scientist/safety/` provides configurations for runtime safety checks.
@@ -102,9 +87,7 @@ with st.expander("🔑 Key Changes to the Sakana AI Repository (summary)", expan
 **5) Colab** — ready notebook to run experiments and connect Drive.
 """)
 
-# ---------------------------
 # Helpers
-# ---------------------------
 def compute_static_issues(code: str, blocked_calls_list: List[str]) -> List[str]:
     issues = []
     lowered = code.lower()
@@ -248,9 +231,7 @@ def list_experiments(base: Path) -> List[Path]:
             exps.extend(sorted(canonical.rglob(ext)))
     return exps
 
-# ---------------------------
 # Layout
-# ---------------------------
 col1, col2 = st.columns([2, 1])
 
 with col1:
