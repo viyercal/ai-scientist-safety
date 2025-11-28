@@ -29,7 +29,8 @@ logger = logging.getLogger("ai-scientist")
 SAFETY_CONFIG = load_safety_config(
     Path(__file__).resolve().parent.parent / "safety" / "safety_config.yaml"
 )
-
+from dotenv import load_dotenv
+load_dotenv()
 def confirm_before_run(timeout_sec: int = 15) -> bool:
     """
     Give user a short window to cancel execution.
@@ -422,8 +423,8 @@ class Interpreter:
                     - What safety checks or constraints should be added
                     - Best practices for future code generation to be more safety-conscious
                     Format your response clearly with sections for each of the above points."""
-                        
-                    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"], base_url="https://openrouter.ai/api/v1")
+                    api_key = os.getenv("OPENROUTER_API_KEY")
+                    client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
                     response = client.chat.completions.create(
                         model=model,
                         messages=[{"role": "system", "content": prompt_sys},

