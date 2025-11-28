@@ -195,6 +195,3 @@ cache/
 huggingface/
 
 
-
-#not currently working
-streamlit_app.py
