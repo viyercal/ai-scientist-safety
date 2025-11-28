@@ -193,3 +193,8 @@ final_papers/
 # HF
 cache/
 huggingface/
+
+
+
+#not currently working
+streamlit_app.py
