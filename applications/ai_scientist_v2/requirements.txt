@@ -28,3 +28,5 @@ omegaconf
 botocore
 boto3
 python-dotenv
+torch
+sklearn
