@@ -31,7 +31,7 @@ SAFETY_CONFIG = load_safety_config(
 )
 from dotenv import load_dotenv
 load_dotenv()
-def confirm_before_run(timeout_sec: int = 15) -> bool:
+def confirm_before_run(timeout_sec: int = 10) -> bool:
     """
     Give user a short window to cancel execution.
     In Colab/notebooks, they can click 'Interrupt execution' or hit Ctrl+C.
@@ -251,7 +251,7 @@ class Interpreter:
         # --- SAFETY GATE: static analysis before any child process is created ---
         safety_report: SafetyReport = analyze_code_str(code, SAFETY_CONFIG)
         # If there are *any* issues but we still decided to allow execution,
-        # warn the user and give a 15-second window to interrupt.
+        # warn the user and give a 10-second window to interrupt.
         if safety_report.issues:
             # Build a short summary of issues
             issues_lines = [
@@ -423,7 +423,7 @@ class Interpreter:
                     - What safety checks or constraints should be added
                     - Best practices for future code generation to be more safety-conscious
                     Format your response clearly with sections for each of the above points."""
-                    api_key = os.getenv("OPENROUTER_API_KEY")
+                    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
                     client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
                     response = client.chat.completions.create(
                         model=model,

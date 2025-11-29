@@ -22,12 +22,17 @@ try:
     loaded_env = False
     for env_path in env_paths:
         if env_path.exists():
-            load_dotenv(env_path, override=False)  # Don't override existing env vars
+            # Always override empty values - Docker --env-file may set them as empty strings
+            # Check if values are empty or just whitespace
+            openai_before = os.environ.get("OPENAI_API_KEY", "").strip()
+            openrouter_before = os.environ.get("OPENROUTER_API_KEY", "").strip()
+            if not openai_before or not openrouter_before:
+                # If empty, override with .env file values
+                load_dotenv(env_path, override=True)
+            else:
+                # If already set with real values, don't override
+                load_dotenv(env_path, override=False)
             loaded_env = True
-            # Verify the key was loaded
-            if os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENROUTER_API_KEY"):
-                # Successfully loaded
-                pass
             break
     if not loaded_env:
         # .env file not found, but that's okay if env vars are set another way
@@ -72,15 +77,6 @@ if str(app_dir) not in sys.path:
 # Also add repo root as fallback (if different from app_dir)
 if str(repo_root) not in sys.path and str(repo_root) != str(app_dir):
     sys.path.insert(0, str(repo_root))
-
-user_root = st.sidebar.text_input("Override repo root (optional)", value=str(repo_root))
-if user_root and Path(user_root).exists():
-    if user_root not in sys.path:
-        sys.path.insert(0, user_root)
-    # Also try adding applications/ai_scientist_v2 relative to user_root
-    app_path_from_user = Path(user_root) / "applications" / "ai_scientist_v2"
-    if app_path_from_user.exists() and str(app_path_from_user) not in sys.path:
-        sys.path.insert(0, str(app_path_from_user))
 
 Interpreter = None
 SafetyConfig = None
@@ -188,23 +184,18 @@ def run_with_interpreter(code: str) -> Dict[str, Any]:
         venv_site_packages = None
         
         # Pass API keys to child process so agent_verify can access them
-        # interpreter.py uses os.getenv("OPENAI_API_KEY") in agent_verify function
-        # So we must ensure OPENAI_API_KEY is set in the child process environment
-        openai_key = os.environ.get("OPENAI_API_KEY")
-        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+        # interpreter.py uses os.getenv("OPENROUTER_API_KEY") in agent_verify function
+        # So we must ensure OPENROUTER_API_KEY is set in the child process environment
+        openai_key = os.getenv("OPENAI_API_KEY")
+        openrouter_key = os.getenv("OPENROUTER_API_KEY")
         
-        # Prefer OPENAI_API_KEY, but use OPENROUTER_API_KEY if that's what's available
-        api_key = openai_key or openrouter_key
+        # Prefer OPENROUTER_API_KEY, but use OPENAI_API_KEY if that's what's available
+        # Since interpreter.py checks OPENROUTER_API_KEY first, set it from OPENAI_API_KEY if needed
+        api_key = openrouter_key or openai_key
         if api_key:
-            # Always set OPENAI_API_KEY since interpreter.py expects it
-            env_vars["OPENAI_API_KEY"] = api_key
-            # Also set OPENROUTER_API_KEY if it exists and is different
-            if openrouter_key and openrouter_key != api_key:
-                env_vars["OPENROUTER_API_KEY"] = openrouter_key
-        else:
-            # No API key found - agent_verify will fail, but that's okay
-            # The error will be caught and displayed to the user
-            pass
+            # Set both keys - interpreter.py checks OPENROUTER_API_KEY first
+            env_vars["OPENROUTER_API_KEY"] = api_key
+            env_vars["OPENAI_API_KEY"] = openai_key or api_key
         
         # Check if we're in a venv (sys.prefix != sys.base_prefix)
         if sys.prefix != sys.base_prefix:

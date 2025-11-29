@@ -58,7 +58,7 @@ class SafetyConfig:
 
     # Interactive confirmation gate
     require_user_confirm: bool = True
-    confirm_timeout_sec: int = 15
+    confirm_timeout_sec: int = 10
 
 
 def load_safety_config(path: str | Path) -> SafetyConfig:
