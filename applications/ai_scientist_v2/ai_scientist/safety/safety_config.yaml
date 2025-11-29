@@ -22,4 +22,4 @@ max_runtime_sec: 600
 max_ram_mb: 4096
 allow_fs_outside_sandbox: false
 require_user_confirm: true
-confirm_timeout_sec: 15
+confirm_timeout_sec: 10
