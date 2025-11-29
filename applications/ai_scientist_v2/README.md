@@ -42,15 +42,21 @@ A ready-to-use Colab notebook is provided for:
 
 This offers a simple, accessible environment for testing and demonstration. Note: the Colab is specially to generate new research ideas based on a general domain/seed provided in the `ideas` directory, as well as to conduct experiments from end-end. This is done via colab as the system is highly complex, and visualizing the process in colab is more beneficial than via a UI
 
+---
+
 ### 6. **Streamlit UI**
 The Streamlit UI is denoted `app.py` in the `ai_scientist_v2` directory, and can be run either locally via entering the `ai_scientist_v2` directory and running "streamlit run app.py", or by leveraging the Docker setup provided. This UI helps to visualize the impact of the safety layer on generated experiment code, able to run the code itself within the UI via integration into the custom interpreter. Furthermore, for simplicity, the basic test cases can be run via the UI, demonstrating the safety conditions.
 
+---
+
 ### **Important: Running Instructions**
-Copy the .env.example file and input your apikeys/credentials. The current implementation uses openrouter for model access and as the url within the openai client leveraged in the `agent_verify` method of the interpreter. Install your requirements via pip install -r requirements.txt (or using your preferred manager), and run the app with streamlit run app.py. 
+Copy the .env.example file and input your apikeys/credentials. The current implementation uses openrouter for model access and as the url within the openai client leveraged in the `agent_verify` method of the interpreter.   
+Install your requirements via pip install -r requirements.txt (or using your preferred manager), and run the app with streamlit run app.py. 
 
+---
 
-**Project Slug**: safe-ai-scientist
-**Deployment URL**: https://[cloudfront-domain]/safe-ai-scientist
+**Project Slug**: safe-ai-scientist  
+**Deployment URL**: https://[cloudfront-domain]/safe-ai-scientist   
 **Main Files:** `app.py`, and the colab ipynb file for conducting experiments
 
 
