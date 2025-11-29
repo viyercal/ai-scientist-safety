@@ -186,8 +186,13 @@ def run_with_interpreter(code: str) -> Dict[str, Any]:
         # Pass API keys to child process so agent_verify can access them
         # interpreter.py uses os.getenv("OPENROUTER_API_KEY") in agent_verify function
         # So we must ensure OPENROUTER_API_KEY is set in the child process environment
-        openai_key = os.getenv("OPENAI_API_KEY")
-        openrouter_key = os.getenv("OPENROUTER_API_KEY")
+        # Re-check environment after .env loading (in case it was loaded after initial check)
+        openai_key = os.getenv("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+        openrouter_key = os.getenv("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY", "")
+        
+        # Strip whitespace and filter out empty strings
+        openai_key = openai_key.strip() if openai_key else None
+        openrouter_key = openrouter_key.strip() if openrouter_key else None
         
         # Prefer OPENROUTER_API_KEY, but use OPENAI_API_KEY if that's what's available
         # Since interpreter.py checks OPENROUTER_API_KEY first, set it from OPENAI_API_KEY if needed
