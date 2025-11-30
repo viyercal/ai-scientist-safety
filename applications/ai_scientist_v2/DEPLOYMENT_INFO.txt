@@ -1,0 +1,21 @@
+Project Slug: safe-ai-scientist
+Student Name: Vivek Iyer
+Student Email: vivek.iyer@columbia.edu
+Main File: app.py (and AI_Scientist_V2_Safety.ipynb)
+
+Environment Variables Needed:
+- OPENAI_API_KEY: Yes
+- OPENAI_BASE_URL: Yes: I used openrouter: "https://openrouter.ai/api/v1”
+- open_router: Yes
+
+Verified Working Locally: Yes
+Verified Working in Docker: Yes
+
+Notes: 
+To run the docker container, please run these commands:
+docker build --platform linux/amd64 -t safe-ai-scientist:latest .  
+
+docker run -p 8501:8501   -e OPENAI_API_KEY="insert_your_key"   safe-ai-scientist:latest
+
+The structure of my project is a bit atypical, without utils/ or agents/ due to the integration with Sakana AI’s codebase. Streamlit still runs locally and via Docker, however. 
+
