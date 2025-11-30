@@ -53,13 +53,22 @@ The Streamlit UI is denoted `app.py` in the `ai_scientist_v2` directory, and can
 Copy the .env.example file and input your apikeys/credentials. The current implementation uses openrouter for model access and as the url within the openai client leveraged in the `agent_verify` method of the interpreter.   
 Install your requirements via pip install -r requirements.txt (or using your preferred manager), and run the app with streamlit run app.py. 
 
+**Docker Instructions**  
+```
+docker build --platform linux/amd64 -t safe-ai-scientist:latest .  
+
+docker run -p 8501:8501 \
+  -e OPENAI_API_KEY="insert_your_key" \
+  safe-ai-scientist:latest
+```
+  
 ---
 
 **Project Slug**: safe-ai-scientist  
 **Deployment URL**: https://[cloudfront-domain]/safe-ai-scientist   
 **Main Files:** `app.py`, and the colab ipynb file for conducting experiments
 
-
+  
 ---
 <div align="center">
   <h1>
