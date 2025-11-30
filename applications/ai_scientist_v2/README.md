@@ -1,6 +1,8 @@
 I have attached the original **Sakana AI README** below for reference, attribution, and future exploration.
 However, **the added code will be explained above Sakana’s README.**
 
+For more information, feel free to reference [this writeup.](https://docs.google.com/document/d/e/2PACX-1vRRm03oYLpl2zqZAK3tHDzVAvE_Qm8TfRoW65P3NXFaK0A66YhVdmspuqG06hPc7z11dxi3jrG0YGrQ/pub)
+
 ---
 
 ## Key Changes to the Sakana AI Repository
